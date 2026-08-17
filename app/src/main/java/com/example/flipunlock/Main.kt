@@ -10,7 +10,6 @@ import com.example.flipunlock.hook.system_server.AppFullscreen
 import com.example.flipunlock.hook.system_server.AppWhitelist
 import com.example.flipunlock.hook.system_server.DisplayStateHook
 import com.example.flipunlock.hook.system_server.InputMethodHook
-import com.example.flipunlock.hook.system_server.WallpaperFixHook
 import com.example.flipunlock.hook.systemui.AodHook
 import com.example.flipunlock.hook.systemui.ControlCenterHook
 import com.example.flipunlock.hook.systemui.FlashlightHook
@@ -70,7 +69,6 @@ class Main : XposedModule() {
         log("Main: onSystemServerStarting")
         DisplayStateHook.hook(param)   // 拓扑钉死: flip1 内屏已拆恒外屏 / flip2 折叠外屏
         AppFullscreen.hook(param)      // size-compat 禁用(全屏)
-        WallpaperFixHook.hook(param)   // 壁纸右黑修复(flip1 外屏, 原生 bug)
         AppWhitelist.hook(param)       // 外屏 app 白名单(全部 app setForceDisplayCompatMode allowstart)
         InputMethodHook.hook(param)    // IME 外屏自由(shouldShowCurrentInput→true / 转屏 toast 抑制)
         AodHook.hookFramework(param)   // AOD framework 侧(flip1; flip2 内部 SKIP)

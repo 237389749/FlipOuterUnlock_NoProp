@@ -23,7 +23,7 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  */
 object WallpaperFixHook {
 
-    // flip1 外屏 1208×1392 的最大边; 换机型(如 flip2 外屏尺寸不同)需调整
+    // flip1 外屏 1208×1392 的最大边; flip2 外屏同尺寸(refMD §44 状态表 1208×1392), 双机型通用
     private const val MAX_DIM = 1392
 
     fun hook(param: SystemServerStartingParam) {

@@ -12,7 +12,9 @@ import com.example.flipunlock.hook.system_server.DisplayStateHook
 import com.example.flipunlock.hook.system_server.InputMethodHook
 import com.example.flipunlock.hook.system_server.WallpaperFixHook
 import com.example.flipunlock.hook.systemui.AodHook
+import com.example.flipunlock.hook.systemui.ControlCenterHook
 import com.example.flipunlock.hook.systemui.FlashlightHook
+import com.example.flipunlock.hook.systemui.NotifMenuFixHook
 import com.example.flipunlock.hook.util.currentProcessName
 import com.example.flipunlock.hook.util.log
 import io.github.libxposed.api.XposedModule
@@ -50,6 +52,8 @@ class Main : XposedModule() {
     private val packageHooks = listOf<BaseHook>(
         CutoutAlwaysHook,           // cutout: 全进程空 cutout 构造 → 全局全屏(双机型; camera 排除保真实 cutout)
         FlashlightHook,             // systemui: 手电筒(跳弹窗 + setFlipListening 直接 toggle)
+        ControlCenterHook,          // systemui: flip 控制中心 COMPACT 编辑按钮 + device center 尺寸(移植 MixFlipMod, unlock2 重写)
+        NotifMenuFixHook,           // systemui: 外屏通知菜单按普通手机样式(移植 MixFlipMod hookNotification, 补全逻辑链)
         AodHook,                    // systemui: flip1 AOD 外屏显示(属性4版, 已去 #5 getCutout→NONE)
         SogouInputHook,             // ime: 输入法键盘高度/布局修复
         WidgetRemove,               // fliphome: 外屏桌面小部件移除

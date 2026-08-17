@@ -49,6 +49,10 @@ object WidgetRemove : BaseHook() {
     private const val ACTION_REMOVE_WINDOW = 2
 
     override fun setupHooks(param: PackageReadyParam) {
+        if (!Config.uiWidget) {
+            log("WidgetRemove: DISABLED by persist.flipunlock.ui.widget")
+            return
+        }
         runCatching {
             val windowClass = param.classLoader.loadClass(
                 "com.miui.fliphome.widget.WatchOverlayWindow")

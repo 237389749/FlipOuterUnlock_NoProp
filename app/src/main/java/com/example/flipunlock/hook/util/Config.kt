@@ -146,6 +146,8 @@ object Config {
     val uiWidget: Boolean get() = enabled && raw("persist.flipunlock.ui.widget", true)
     val uiControlCenter: Boolean get() = enabled && raw("persist.flipunlock.ui.controlcenter", true)
     val uiNotifMenu: Boolean get() = enabled && raw("persist.flipunlock.ui.notifmenu", true)
+    val flashlight: Boolean get() = enabled && raw("persist.flipunlock.systemui.flashlight", true)
+    val appWhitelist: Boolean get() = enabled && raw("persist.flipunlock.app.whitelist", true)
     val uiRecentsMenu: Boolean get() = enabled && raw("persist.flipunlock.ui.recentsmenu", true)
     // QSTileMinCountFixHook(控制中心编辑磁贴下限→0)开关
     val qsTileMinCount: Boolean get() = enabled && raw("persist.flipunlock.ui.qstilemin", true)

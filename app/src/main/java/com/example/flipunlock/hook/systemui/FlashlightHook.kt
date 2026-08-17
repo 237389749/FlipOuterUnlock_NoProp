@@ -1,6 +1,7 @@
 package com.example.flipunlock.hook.systemui
 
 import com.example.flipunlock.hook.BaseHook
+import com.example.flipunlock.hook.util.Config
 import com.example.flipunlock.hook.util.hook
 import com.example.flipunlock.hook.util.log
 import com.example.flipunlock.hook.util.method
@@ -28,6 +29,10 @@ object FlashlightHook : BaseHook() {
     override val targetPackages = listOf("android", "com.android.systemui")
 
     override fun setupHooks(param: PackageReadyParam) {
+        if (!Config.flashlight) {
+            log("FlashlightHook: DISABLED by persist.flipunlock.systemui.flashlight")
+            return
+        }
         if (param.packageName == "android") {
             val proc = currentProcessName()
             if (proc != "com.android.systemui") {

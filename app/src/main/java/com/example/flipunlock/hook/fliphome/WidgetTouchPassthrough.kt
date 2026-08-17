@@ -59,6 +59,10 @@ object WidgetTouchPassthrough : BaseHook() {
     }
 
     override fun setupHooks(param: PackageReadyParam) {
+        if (!Config.uiWidget) {
+            log("WidgetTouchPassthrough: DISABLED by persist.flipunlock.ui.widget")
+            return
+        }
         val clazz = findGroupViewClass(param.classLoader) ?: run {
             log("WidgetTouch: WatchOverlayGroupView class not found")
             return

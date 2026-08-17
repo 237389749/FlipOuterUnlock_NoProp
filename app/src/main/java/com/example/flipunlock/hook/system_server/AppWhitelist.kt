@@ -51,6 +51,10 @@ object AppWhitelist {
     private const val POLL_INTERVAL_MS = 2_000L
 
     fun hook(param: SystemServerStartingParam) {
+        if (!Config.appWhitelist) {
+            log("AppWhitelist: DISABLED by persist.flipunlock.app.whitelist")
+            return
+        }
         log("AppWhitelist: armed (deferred until boot completes)")
         // Do NOTHING synchronously here — system_server is mid-bootstrap.
         Thread {

@@ -31,6 +31,10 @@ object CutoutAlwaysHook : BaseHook() {
     override val targetPackages = listOf("*")
 
     override fun setupHooks(param: PackageReadyParam) {
+        if (!Config.displayCutout) {
+            log("CutoutAlwaysHook: DISABLED by persist.flipunlock.display.cutout")
+            return
+        }
         // camera 排除（2026-08-10）：camera 由 CameraReverseHook 恢复 flip 身份（属性读 4），
         // 需要真实 cutout 做 flip 布局；本 hook 清零 cutout 会破坏 camera 布局。
         if (param.packageName == "com.android.camera") {

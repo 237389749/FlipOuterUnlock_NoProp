@@ -55,12 +55,16 @@ object DisplayStateHook {
             // ── getCurrentState: 全局返回 6(2026-08-14 实验: 替代 FlashlightHook) ──
             // 手电筒等 getCurrentState()==0 折叠判定消费点看到 6 → 不提示。
             // ⚠️ 实验: 影响所有读该值的进程(方向/continuity/SystemUI), 验证后评估去留。
+            // [2026-08-19 无属性层版本注释] 属性 4(flip 原生)下 flip1 内屏已拆, state 6=双屏
+            //   布局引用不存在的 LogicalDisplay → LogicalDisplayMapper.applyLayoutLocked NPE
+            //   (android.display 崩溃, LSP 安全模式)——该实验 hook 与属性 4 + 单外屏冲突, 禁用。
+            //   FlashlightHook(系统UI进程跳弹窗)已独立提供手电筒修复, 无需此全局改值。
             runCatching {
                 val cls = param.classLoader.loadClass(
                     "com.android.server.devicestate.DeviceStateManagerService")
                 val m = cls.method("getCurrentState")
-                hook(m, replaceResult(6))
-                log("DisplayStateHook: ✓ getCurrentState → 6 (全局, 替代 FlashlightHook 实验)")
+                // hook(m, replaceResult(6))
+                // log("DisplayStateHook: ✓ getCurrentState → 6 (全局, 替代 FlashlightHook 实验)")
             }.onFailure { log("DisplayStateHook: ② getCurrentState failed: ${it.message}") }
         }
     }

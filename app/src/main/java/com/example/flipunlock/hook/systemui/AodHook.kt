@@ -154,6 +154,21 @@ object AodHook : BaseHook() {
             // 依赖它做布局, 强制 NONE → 构造 NPE 崩溃环(实测)。该 hook 只属于属性 1 场景
             // (CutoutRemove 清零后 getCutout 返回 null 的 NPE 防御)。
             // hookDisplayGetCutout(param.classLoader)
+            // ── AOD NPE 防御(2026-08-19, refMD DisplayCutout §15.3 + FoldState 2130-2144 老问题) ──
+            // CutoutZero(system_server)清了 cutout 源头 → SystemUI 进程 getCutout()=null
+            //   → AOD DisplayUtils.getCutoutPosition 读 getCutout().getBoundingRectLeft() 无 null 检查
+            //   → SystemUI crash-loop(每~7s, plugin connect 触发, 早于 dream)。
+            // 精准修: hook getCutoutPosition → CAMERA_CUTOUT_ON_NONE(AOD 不读 cutout, 不崩),
+            //   不影响全局 Display.getCutout(TinyKeyguardPanel 依赖物理 cutout 不受影响)。
+            runCatching {
+                val cl = processClassLoader(param.classLoader)
+                val duCls = cl.loadClass("com.miui.aod.util.DisplayUtils")
+                val dirCls = cl.loadClass("com.miui.aod.widget.Direction")
+                val noneDir = dirCls.getField("CAMERA_CUTOUT_ON_NONE").get(null)
+                val m = duCls.method("getCutoutPosition", android.content.Context::class.java)
+                hook(m, replaceResult(noneDir))
+                log("AodHook: ✓ DisplayUtils.getCutoutPosition → CAMERA_CUTOUT_ON_NONE (AOD NPE 防御)")
+            }.onFailure { log("AodHook: getCutoutPosition failed: ${it.message}") }
             hookDreamService(param.classLoader)
         }
     }

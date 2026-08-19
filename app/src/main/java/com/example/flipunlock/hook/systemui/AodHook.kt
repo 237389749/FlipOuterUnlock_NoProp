@@ -386,8 +386,12 @@ object AodHook : BaseHook() {
                 ?: run { log("AodHook/L2: FlipLinkageStyleController.INSTANCE null"); return }
             runCatching {
                 val m = ctrlClass.getDeclaredMethod("isFlipped").apply { isAccessible = true }
-                hook(m, replaceResult(false))
-                log("AodHook/L2: FlipLinkageStyleController.isFlipped → false")
+                // [2026-08-19 属性4版] false→true: refMD §30 isAodEnable 判定链
+                //   isFlipDevice && isFlipped → controller.isUsingFlip() → FlipLinkage 外屏样式;
+                //   旧设计(false)让外屏 AOD 走内屏路径=默认样式(非外屏样式)。
+                //   AodHook 仅 flip1(flip2 SKIP), flip1 恒折叠 → isFlipped 真实=true, hook true 与物理一致。
+                hook(m, replaceResult(true))
+                log("AodHook/L2: FlipLinkageStyleController.isFlipped → true (外屏 AOD 走外屏样式, refMD §30)")
             }.onFailure { log("AodHook/L2: isFlipped failed", it) }
             runCatching {
                 val m = ctrlClass.getDeclaredMethod("isUsingFlip", android.content.Context::class.java)

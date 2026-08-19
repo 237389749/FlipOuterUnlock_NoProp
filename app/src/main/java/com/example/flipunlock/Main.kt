@@ -8,6 +8,7 @@ import com.example.flipunlock.hook.fliphome.WidgetTouchPassthrough
 import com.example.flipunlock.hook.ime.SogouInputHook
 import com.example.flipunlock.hook.system_server.AppFullscreen
 import com.example.flipunlock.hook.system_server.AppWhitelist
+import com.example.flipunlock.hook.system_server.CutoutZeroHook
 import com.example.flipunlock.hook.system_server.InputMethodHook
 import com.example.flipunlock.hook.systemui.AodHook
 import com.example.flipunlock.hook.systemui.ControlCenterHook
@@ -69,6 +70,7 @@ class Main : XposedModule() {
         // DisplayStateHook.hook(param)   // [2026-08-19 注释] 属性4原生 display 布局已正确(折叠外屏/展开内屏);
         //                                    hook DeviceStateToLayoutMap.get 强制 state0 → applyLayoutLocked NPE
         //                                    (LogicalDisplay null, android.display 崩, LSP 安全模式) — 双机型属性4均不需要
+        CutoutZeroHook.hook(param)     // system_server 端 cutout 源头清零(calculateDisplayCutoutForRotation→NO_CUTOUT, refMD §17)
         AppFullscreen.hook(param)      // size-compat 禁用(全屏)
         AppWhitelist.hook(param)       // 外屏 app 白名单(全部 app setForceDisplayCompatMode allowstart)
         InputMethodHook.hook(param)    // IME 外屏自由(shouldShowCurrentInput→true / 转屏 toast 抑制)

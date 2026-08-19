@@ -68,6 +68,41 @@ object CutoutZeroHook {
                 }
                 log("CutoutZero: ✓ pathAndDisplayCutoutFromSpec → (null, NO_CUTOUT)")
             }.onFailure { log("CutoutZero: pathAndDisplayCutoutFromSpec failed: ${it.message}") }
+
+            // ★ InsetsState.getDisplayCutoutSafe(Rect outBounds): after → 恢复完整 bounds
+            // (refMD §18: 开机时全局 InsetsState.mDisplayCutout(真实 cutout)在 onSystemServerStarting
+            //  之前构造, calculateDisplayCutoutForRotation 只拦旋转新计算、拦不到缓存 →
+            //   computeFrames 仍用裁剪后 bounds = "cutout 只清一半"的元凶。
+            //  after 恢复 (-100000,-100000,100000,100000) → 每次 computeFrames 见未裁剪 bounds)
+            runCatching {
+                val insetsCls = param.classLoader.loadClass("android.view.InsetsState")
+                val m = insetsCls.method("getDisplayCutoutSafe",
+                    android.graphics.Rect::class.java)
+                hook(m, after { chain, result ->
+                    val outBounds = chain.args[0] as? android.graphics.Rect
+                    if (outBounds != null) {
+                        outBounds.set(-100000, -100000, 100000, 100000)
+                    }
+                    result
+                })
+                log("CutoutZero: ✓ InsetsState.getDisplayCutoutSafe → 完整 bounds (缓存 InsetsState 也清)")
+            }.onFailure { log("CutoutZero: InsetsState.getDisplayCutoutSafe failed: ${it.message}") }
+
+            // 源头入口: DisplayCutout.fromResourcesRectApproximation(6参, refMD §16 入口点)
+            //   → NO_CUTOUT(DisplayDevice 层源头, 早于 DisplayContent)
+            runCatching {
+                val dcClass = param.classLoader.loadClass("android.view.DisplayCutout")
+                val m = dcClass.method("fromResourcesRectApproximation",
+                    android.content.res.Resources::class.java,
+                    String::class.java,
+                    Int::class.javaPrimitiveType!!,
+                    Int::class.javaPrimitiveType!!,
+                    Int::class.javaPrimitiveType!!,
+                    Int::class.javaPrimitiveType!!)
+                val empty = noCutout ?: return@runCatching
+                hook(m, replaceResult(empty))
+                log("CutoutZero: ✓ fromResourcesRectApproximation → NO_CUTOUT (DisplayDevice 源头)")
+            }.onFailure { log("CutoutZero: fromResourcesRectApproximation failed: ${it.message}") }
         }
     }
 }

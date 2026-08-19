@@ -26,6 +26,15 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  */
 object CutoutZeroHook {
 
+    /** DisplayCutout.NO_CUTOUT(@hide, 编译期不可见) — 反射获取。 */
+    private val noCutout: Any? by lazy {
+        runCatching {
+            val f = DisplayCutout::class.java.getDeclaredField("NO_CUTOUT")
+            f.isAccessible = true
+            f.get(null)
+        }.getOrNull()
+    }
+
     fun hook(param: SystemServerStartingParam) {
         if (!Config.displayCutout) {
             log("CutoutZero: DISABLED by persist.flipunlock.display.cutout")
@@ -38,7 +47,8 @@ object CutoutZeroHook {
                 val cls = param.classLoader.loadClass("com.android.server.wm.DisplayContent")
                 val m = cls.method("calculateDisplayCutoutForRotation",
                     Int::class.javaPrimitiveType!!)
-                hook(m, replaceResult(DisplayCutout.NO_CUTOUT))
+                val empty = noCutout ?: return@runCatching
+                hook(m, replaceResult(empty))
                 log("CutoutZero: ✓ calculateDisplayCutoutForRotation → NO_CUTOUT (mDisplayInfo.displayCutout 恒 null)")
             }.onFailure { log("CutoutZero: calculateDisplayCutoutForRotation failed: ${it.message}") }
 
@@ -52,8 +62,9 @@ object CutoutZeroHook {
                 method.isAccessible = true
                 val pairClass = param.classLoader.loadClass("android.util.Pair")
                 val pairCtor = pairClass.getConstructor(Any::class.java, Any::class.java)
+                val empty = noCutout ?: return@runCatching
                 hook(method) { _ ->
-                    pairCtor.newInstance(null, DisplayCutout.NO_CUTOUT)
+                    pairCtor.newInstance(null, empty)
                 }
                 log("CutoutZero: ✓ pathAndDisplayCutoutFromSpec → (null, NO_CUTOUT)")
             }.onFailure { log("CutoutZero: pathAndDisplayCutoutFromSpec failed: ${it.message}") }

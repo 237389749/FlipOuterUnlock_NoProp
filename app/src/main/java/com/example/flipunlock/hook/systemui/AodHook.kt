@@ -9,7 +9,8 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  * Always-On Display on the outer (cover) screen when folded.
  *
  * AOD is the most tangled feature in this module (refMD: FoldState_Device_Identity.md
- * §25 AOD/Doze architecture, §26 AOD app layer). Two cooperating sides:
+ * §25 AOD/Doze architecture, §26 AOD app layer, §30.6 属性4 终版判定链; DisplayCutout.md §28
+ * 正常折叠 AOD 启用 + cutout 崩溃链). Two cooperating sides:
  *
  * ── Framework side (system_server) — keeps the rear dream alive ──
  *   PowerManagerService.handleRearSandman(groupId=1):
@@ -25,32 +26,50 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  *
  * ── App side (com.android.systemui / com.miui.aod) — force the AOD screen state ──
  *   The AOD classes (com.miui.aod.*) live in MIUIAod.apk under a SEPARATE classloader
- *   that onPackageReady's classLoader cannot see. Two layers:
- *   Layer 0 (framework, visible from SystemUI — runs FIRST, fixes a hard crash):
- *     #5 android.view.Display.getCutout() → DisplayCutout.NONE. The AOD flip path
- *     DozeHost.dealWithFlipChange()→DisplayUtils.getCutoutPosition() dereferences
- *     display.getCutout() with no null check; our CutoutRemove zeroes it → NPE →
- *     SystemUI crash-loop at plugin connect (before any dream). The old project dodged
- *     this only because its DeviceIdentityHook made isFlipDevice()→false and skipped the
- *     flip path entirely. Returning the empty non-null NONE defuses the NPE.
+ *   that onPackageReady's classLoader cannot see. Three layers:
+ *   Layer 0 (framework, visible from SystemUI — runs FIRST, defuses the NPE):
+ *     AOD cutout defense: com.miui.aod.util.DisplayUtils.getCutoutPosition(Context)
+ *     → Direction.CAMERA_CUTOUT_ON_NONE. 实锤(FlipRes/aod DisplayUtils.java:18-29):
+ *     `cutout = context.getDisplay().getCutout(); cutout.getBoundingRectLeft()...`
+ *     无 null 检查。调用点全包唯一 = DozeHost.dealWithFlipChange L796(startDozing L601,
+ *     refMD §28.2 崩溃链)。若 getCutout()==null → NPE → SystemUI crash-loop(每~7s)。
+ *     ⚠ 与 CutoutAlwaysHook #2 的分工: #2 是全进程全局 hook Display.getCutout→非 null 空
+ *     cutout(主防线, 但属性 4 下会波及 TinyKeyguardPanel, 见下"KNOWN RISKS"); 本 hook
+ *     是 AOD 内精准防御(第二道, 不动全局 getCutout)。
  *   Layer 1 (framework DreamService, visible from SystemUI):
- *     #3 DreamService.setDozeScreenState(int): block OFF states {0,1,3} → force 4
- *        (AOD ON); let {2,4} pass. (v2.3 fix: state 4 = AOD ON must NOT be rewritten
- *        — the old v1 redirected 4→2 and caused a black screen.)
+ *     #3 DreamService.setDozeScreenState(int): 全状态 {0,1,3,4} → 2 (ON 亮屏).
+ *        flip1 实测(1ae7af5): DOZE_AOD(4) 方案物理屏不显示, 2(亮屏 ON) 必亮 ——
+ *        AOD 内容渲染在亮屏状态。0=FINISH 1=DOZE 2=ON/PULSING 3=DOZE_SUSPEND 4=DOZE_AOD.
  *     #4 DreamService.onDreamingStarted(): one-shot trigger for Layer 2.
  *   Layer 2 (runtime, via the DozeMachine instance's OWN classloader):
  *     walk the object graph from the DreamService to find com.miui.aod.doze.DozeMachine,
  *     then with its classloader hook DozeMachine.requestState() (redirect
  *     DOZE/DOZE_SUSPEND/FINISH → DOZE_AOD), DozeService.setDozeScreenState() (same map
  *     as #3), DozeHost.isFullAod()→false, and FlipLinkageStyleController
- *     isFlipped()→false / isUsingFlip()→true (neutralize the AOD kill switch in
- *     DozeMachine.resolveIntermediateState()).
+ *     isFlipped()→true / isUsingFlip()→true.
+ *     isFlipped→true(属性4版, 2026-08-19): refMD §30.6 —— isAodEnable 判定链
+ *     isFlipDevice && isFlipped → controller.isUsingFlip() → FlipLinkage 外屏样式;
+ *     flip1 恒折叠物理 isFlipped 本来就是 true(dealWithFlipChange L795 setFlipped(true)),
+ *     hook true 与物理一致; 且 L792 `!isFlipped()&&!z` 恒 false → isFlipping 恒 false
+ *     → 跳过 setAodVisibility(false)+600ms PAUSING 振荡(§30.3 不稳定源 1 被绕开)。
+ *     isUsingFlip→true: kill switch(DozeMachine.resolveIntermediateState) 保活。
  *
- * KNOWN RISKS (refMD §26): on MIX Flip the AOD code runs inside the SystemUI process;
- * the DozeMachine graph walk or the classloader isolation may keep parts of Layer 2
- * from firing. The DozeMachine state flow can also skip DOZE_AOD entirely. This port
- * is faithful to the old project (with the immutable-args and screen-state bugs fixed)
- * and is expected to need on-device iteration.
+ * KNOWN RISKS (refMD §26/§28.4):
+ *   - classloader 隔离: onPackageReady 的 classLoader 看不到 com.miui.aod.*。本版
+ *     层 B 用多 classloader 候选(进程 Application / 回调 classLoader / ActivityThread
+ *     mAllClassLoaders 遍历), 并在 Layer 2(拿到 DozeMachine 的 classloader)后补装。
+ *     若仍装不上, 依赖 CutoutAlwaysHook #2(非 null 空 cutout)兜底 —— 2026-08-20 设备
+ *     实测: 属性 4 原生外屏 cutout 运行时即为空(非 null 空实例), AOD 稳定不崩, 说明
+ *     Display.getCutout() 在属性 4 下本就返回非 null(空), NPE 只在源头真变 null 时出现。
+ *   - DozeMachine state flow 可跳过 DOZE_AOD; Layer 2 图遍历/classloader 可能部分不触发。
+ *   - ⚠ 层 A(CutoutAlwaysHook #2) 全进程全局 Display.getCutout→空 cutout 在属性 4 下
+ *     可能波及 TinyKeyguardPanel(2026-08-17 实测 hook Display.getCutout→NONE → 构造 NPE
+ *     崩溃环; refMD §28.4-2)。本 hook 的"精准修"定位即避免该波及 —— 但层 A 若开启,
+ *     全局 getCutout 已被替换, 精准修仅作为第二道保险, 二者叠加行为需装机实测。
+ *   - FlipLinkageClock 视觉(§28.4-4): getClockOrientation() 驱动时钟旋转/挖孔避让
+ *     margin(FlipLinkageClock.java:596)。hook NONE = 时钟按无挖孔布局。2026-08-20 设备
+ *     实测: 属性 4 原生 cutout 为空 → 原生 getCutoutPosition 本就返回 NONE → 与 hook 结果
+ *     一致, 无新增视觉变化。
  *
  * Toggle: persist.flipunlock.display.aod (default true)
  */
@@ -65,6 +84,13 @@ object AodHook : BaseHook() {
     /** Runtime (Layer 2) hooks installed at most once per process. */
     @Volatile
     private var runtimeHooksInstalled = false
+
+    /** 层 B (getCutoutPosition → NONE) 已装标志 + 实际安装到的 classloader.
+     *  记录 loader 而非纯布尔: 多个 classloader 可能各有一份 com.miui.aod.* 类,
+     *  L2 拿到真实 plugin classloader(machineCl) 后若与此不同仍需补装(否则被
+     *  错误的"已装"跳过, review 2026-08-20 should-fix #1)。 */
+    @Volatile
+    private var aodCutoutDefenseCl: ClassLoader? = null
 
     // ── Framework side (system_server) ──────────────────────────────────
 
@@ -149,26 +175,16 @@ object AodHook : BaseHook() {
             log("AodHook(app): setupHooks pkg=${param.packageName}")
         }
         safeHook("AodHook") {
-            // [2026-08-17 无属性层版本] #5 Display.getCutout→NONE 已禁用——
-            // 属性 4(flip 原生)下 cutout 是物理挖孔数据, TinyKeyguardPanel 的 flip 路径
-            // 依赖它做布局, 强制 NONE → 构造 NPE 崩溃环(实测)。该 hook 只属于属性 1 场景
-            // (CutoutRemove 清零后 getCutout 返回 null 的 NPE 防御)。
-            // hookDisplayGetCutout(param.classLoader)
-            // ── AOD NPE 防御(2026-08-19, refMD DisplayCutout §15.3 + FoldState 2130-2144 老问题) ──
-            // CutoutZero(system_server)清了 cutout 源头 → SystemUI 进程 getCutout()=null
-            //   → AOD DisplayUtils.getCutoutPosition 读 getCutout().getBoundingRectLeft() 无 null 检查
-            //   → SystemUI crash-loop(每~7s, plugin connect 触发, 早于 dream)。
+            // ── 层 B: AOD NPE 防御(2026-08-19 引入, 2026-08-20 重写加固) ──
+            // CutoutZero(system_server, DisplayCutout §28.2)清源头 → mDisplayInfo.displayCutout
+            //   = null → app 进程 Display.getCutout() 返回 null(framework Display.java:383-384)
+            //   → AOD DisplayUtils.getCutoutPosition 读 getBoundingRectLeft() 无 null 检查
+            //   → SystemUI crash-loop(每~7s, startDozing→dealWithFlipChange 触发, 早于 dream)。
             // 精准修: hook getCutoutPosition → CAMERA_CUTOUT_ON_NONE(AOD 不读 cutout, 不崩),
             //   不影响全局 Display.getCutout(TinyKeyguardPanel 依赖物理 cutout 不受影响)。
-            runCatching {
-                val cl = processClassLoader(param.classLoader)
-                val duCls = cl.loadClass("com.miui.aod.util.DisplayUtils")
-                val dirCls = cl.loadClass("com.miui.aod.widget.Direction")
-                val noneDir = dirCls.getField("CAMERA_CUTOUT_ON_NONE").get(null)
-                val m = duCls.method("getCutoutPosition", android.content.Context::class.java)
-                hook(m, replaceResult(noneDir))
-                log("AodHook: ✓ DisplayUtils.getCutoutPosition → CAMERA_CUTOUT_ON_NONE (AOD NPE 防御)")
-            }.onFailure { log("AodHook: getCutoutPosition failed: ${it.message}") }
+            // 2026-08-20 设备实测基准(flip1 属性4 原生): 外屏 cutout 运行时即空(非 null 空实例),
+            //   getCutoutPosition 原生返回 NONE → 本 hook 是"源头真变 null 时"的第二道保险。
+            installAodCutoutDefense(param.classLoader)
             hookDreamService(param.classLoader)
         }
     }
@@ -178,111 +194,64 @@ object AodHook : BaseHook() {
         at.getMethod("currentProcessName").invoke(null) as? String
     }.getOrNull()
 
-    // ── #5 android.view.Display.getCutout() → DisplayCutout.NONE (NPE fix) ──
+    // ── 层 B: DisplayUtils.getCutoutPosition(Context) → CAMERA_CUTOUT_ON_NONE ──
     //
-    // Crash observed on device (SystemUI crash-loop, ~7s restart):
-    //   NullPointerException: DisplayCutout.getBoundingRectLeft() on a null object
-    //     at com.miui.aod.util.DisplayUtils.getCutoutPosition(DisplayUtils.java)
-    //     at com.miui.aod.DozeHost.dealWithFlipChange(DozeHost.java)   ← flip-only path
-    //     at com.miui.aod.DozeHost.create(DozeHost.java)
+    // 崩溃链实锤(refMD §28.2):
+    //   DisplayUtils.getCutoutPosition(DisplayUtils.java:18-29):
+    //     DisplayCutout cutout = context.getDisplay().getCutout();   ← 无 null 检查
+    //     if (!cutout.getBoundingRectLeft().isEmpty()) → LEFT
+    //     if (!cutout.getBoundingRectRight().isEmpty()) → RIGHT
+    //     return CAMERA_CUTOUT_ON_NONE
+    //   调用点全包唯一 = DozeHost.dealWithFlipChange L796(DozeHost.java:780-844):
+    //     L784 if (Utils.isFlipDevice()) → L789 isTinyScreen → L795 setFlipped(true)
+    //     → L796 flipLinkageStyleController.updateClockOrientation(getCutoutPosition(mContext))
+    //   触发时机 = DozeHost.startDozing L601(dealWithFlipChange(config, true)),
+    //   早于 Layer 2(onDreamingStarted) → 层 B 必须在注入早期装好, 不能只靠 L2。
     //
-    // DisplayUtils.getCutoutPosition() does `display.getCutout().getBoundingRectLeft()`
-    // with no null check. Our CutoutRemove zeroes the cutout, so Display.getCutout()
-    // returns null → NPE. This fires the moment the AOD plugin connects (DozeHost.create),
-    // i.e. BEFORE any dream starts — so the Layer-2 runtime hooks are too late to help.
-    //
-    // Why the OLD project never hit this: its DeviceIdentityHook forced Utils.isFlipDevice()
-    // → false, so DozeHost.dealWithFlipChange() (gated on isFlipDevice) was skipped entirely
-    // and getCutoutPosition was never called — i.e. the old AOD worked by pretending to be a
-    // non-flip ("inner-screen") device. We don't spoof identity, so we must defuse the NPE.
-    //
-    // Display.getCutout() is a PUBLIC framework method (R8-safe) visible from the SystemUI
-    // classloader, so hooking it here needs no plugin classloader and no timing tricks.
-    // Returning the non-null empty DisplayCutout.NONE makes getCutoutPosition() fall through
-    // to Direction.CAMERA_CUTOUT_ON_NONE, exactly as if there were simply no cutout.
-    private fun hookDisplayGetCutout(classLoader: ClassLoader) {
-        runCatching {
-            val emptyCutout = emptyDisplayCutout()
-                ?: run { log("AodHook: #5 no empty DisplayCutout available"); return }
-            val method = android.view.Display::class.java.getMethod("getCutout")
-            hook(method) { chain ->
-                // Only return empty cutout when called from AOD code path.
-                // A global replace breaks status bar layout, notification layout,
-                // and camera app (all rely on real cutout data).
-                val stack = android.util.Log.getStackTraceString(Throwable())
-                if (stack.contains("com.miui.aod")) {
-                    emptyCutout
-                } else {
-                    chain.proceed()
-                }
+    // classloader 隔离(§26 Note on AodHook Loading): com.miui.aod.* 在 MIUIAod.apk 独立
+    //   plugin classloader。本版多候选: ① 进程 Application classLoader(processClassLoader)
+    //   ② 回调 classLoader(框架) ③ ActivityThread.mAllClassLoaders 全量遍历。
+    //   任一个能加载到 DisplayUtils 即 hook; 全失败则在 Layer 2 用 DozeMachine 的
+    //   classloader 补装(installRuntimeHooks)。
+    private fun installAodCutoutDefense(fallback: ClassLoader) {
+        if (aodCutoutDefenseCl != null) return
+        val candidates = buildList {
+            add(processClassLoader(fallback))
+            add(fallback)
+            addAll(allClassLoaders())
+        }.distinct()
+        for (cl in candidates) {
+            val ok = runCatching {
+                val duCls = cl.loadClass("com.miui.aod.util.DisplayUtils")
+                val dirCls = cl.loadClass("com.miui.aod.widget.Direction")
+                val noneDir = dirCls.getField("CAMERA_CUTOUT_ON_NONE").get(null)
+                val m = duCls.method("getCutoutPosition", android.content.Context::class.java)
+                hook(m, replaceResult(noneDir))
+                true
+            }.getOrDefault(false)
+            if (ok) {
+                aodCutoutDefenseCl = cl
+                log("AodHook: ✓ DisplayUtils.getCutoutPosition → CAMERA_CUTOUT_ON_NONE (AOD NPE 防御, cl=${cl})")
+                return
             }
-            log("AodHook: #5 Display.getCutout → empty only in AOD call path (NPE fix)")
-        }.onFailure { log("AodHook: #5 Display.getCutout failed", it) }
+        }
+        log("AodHook: getCutoutPosition 防御未装上(无 classloader 可见 com.miui.aod) — 依赖 CutoutAlwaysHook #2 非 null cutout 兜底")
     }
 
-    /**
-     * A non-null DisplayCutout with empty bounding rects.
-     * Tries multiple strategies since the available constructors/fields vary by ROM:
-     *  1. Static field NONE (API 34+ public, may exist as hidden on earlier)
-     *  2. Public 7-param ctor (API 34+): (Insets, Rect, Rect, Rect, Rect, Bounds, Insets)
-     *  3. Internal 4-int ctor (older): (int, int, int, int)
-     *  4. Any declared ctor with all-null/zero args (last resort)
-     */
-    private fun emptyDisplayCutout(): android.view.DisplayCutout? {
-        val clz = android.view.DisplayCutout::class.java
-        // Strategy 1: static NONE field
+    /** ActivityThread.mAllClassLoaders 全量遍历 —— 覆盖 plugin classloader 已创建的场景. */
+    private fun allClassLoaders(): List<ClassLoader> {
+        val result = mutableListOf<ClassLoader>()
         runCatching {
-            val f = clz.getDeclaredField("NONE")
-            f.isAccessible = true
-            (f.get(null) as? android.view.DisplayCutout)?.let {
-                log("AodHook: #5 got DisplayCutout.NONE field")
-                return it
+            val at = Class.forName("android.app.ActivityThread")
+            val thread = at.getMethod("currentActivityThread").invoke(null) ?: return@runCatching
+            val f = at.getDeclaredField("mAllClassLoaders").apply { isAccessible = true }
+            when (val v = f.get(thread)) {
+                is Array<*> -> v.forEach { if (it is ClassLoader) result.add(it) }
+                is List<*> -> v.forEach { if (it is ClassLoader) result.add(it) }
+                is Iterable<*> -> v.forEach { if (it is ClassLoader) result.add(it) }
             }
-        }
-        // Strategy 2: public 7-param ctor (Insets, Rect*4, Bounds, Insets) — pass nulls
-        runCatching {
-            val insetsClz = Class.forName("android.graphics.Insets")
-            val boundsClz = Class.forName("android.graphics.Rect\$Bounds")
-            val ctor = clz.getDeclaredConstructor(
-                insetsClz, android.graphics.Rect::class.java, android.graphics.Rect::class.java,
-                android.graphics.Rect::class.java, android.graphics.Rect::class.java,
-                boundsClz, insetsClz)
-            ctor.isAccessible = true
-            val r = android.graphics.Rect(0, 0, 0, 0)
-            return ctor.newInstance(null, r, r, r, r, null, null) as android.view.DisplayCutout
-        }
-        // Strategy 3: 4-int ctor
-        runCatching {
-            val ctor = clz.getDeclaredConstructor(
-                Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!,
-                Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!)
-            ctor.isAccessible = true
-            log("AodHook: #5 got DisplayCutout via 4-int ctor")
-            return ctor.newInstance(0, 0, 0, 0) as android.view.DisplayCutout
-        }
-        // Strategy 4: enumerate all ctors, try first one with null/defaults
-        runCatching {
-            for (ctor in clz.declaredConstructors) {
-                runCatching {
-                    ctor.isAccessible = true
-                    val params = ctor.parameterTypes.map { p ->
-                        when {
-                            p == Int::class.javaPrimitiveType!! -> 0
-                            p == Boolean::class.javaPrimitiveType!! -> false
-                            p == Long::class.javaPrimitiveType!! -> 0L
-                            else -> null
-                        }
-                    }.toTypedArray()
-                    val obj = ctor.newInstance(*params)
-                    if (obj is android.view.DisplayCutout) {
-                        log("AodHook: #5 got DisplayCutout via ${ctor.parameterCount}-param ctor")
-                        return obj
-                    }
-                }
-            }
-        }
-        log("AodHook: #5 all DisplayCutout creation strategies failed; ctors=${clz.declaredConstructors.size}")
-        return null
+        }.onFailure { log("AodHook: allClassLoaders failed: ${it.message}") }
+        return result
     }
 
     // ── #3/#4 framework DreamService (visible from SystemUI) ──
@@ -332,6 +301,23 @@ object AodHook : BaseHook() {
             val machineCl = machine.javaClass.classLoader
                 ?: run { log("AodHook/L2: DozeMachine classloader null"); return }
             log("AodHook/L2: found DozeMachine, cl=${machineCl.javaClass.simpleName}")
+
+            // 层 B 补装: plugin classloader 此刻一定可见 com.miui.aod.* —— 覆盖注入早期
+            // 候选都找不到 DisplayUtils 的场景(此时 startDozing 已过, 但翻转/重连仍会
+            // 再走 dealWithFlipChange, 且 CutoutZero 若致 null 后续 dream 周期仍需防御)。
+            // 若 setupHooks 阶段已装到别的 classloader(非真实 AOD loader), 也在此补装
+            // 真实 loader 那一份(review 2026-08-20 should-fix #1)。
+            if (aodCutoutDefenseCl != machineCl) {
+                runCatching {
+                    val duCls = machineCl.loadClass("com.miui.aod.util.DisplayUtils")
+                    val dirCls = machineCl.loadClass("com.miui.aod.widget.Direction")
+                    val noneDir = dirCls.getField("CAMERA_CUTOUT_ON_NONE").get(null)
+                    val m = duCls.method("getCutoutPosition", android.content.Context::class.java)
+                    hook(m, replaceResult(noneDir))
+                    aodCutoutDefenseCl = machineCl
+                    log("AodHook/L2: ✓ getCutoutPosition → NONE (补装, machineCl=${machineCl})")
+                }.onFailure { log("AodHook/L2: getCutoutPosition 补装失败: ${it.message}") }
+            }
 
             val stateClass = machineCl.loadClass("com.miui.aod.doze.DozeMachine\$State")
             val values = stateClass.getMethod("values").invoke(null) as Array<*>
@@ -392,7 +378,7 @@ object AodHook : BaseHook() {
         }.onFailure { log("AodHook/L2: DozeHost.isFullAod failed", it) }
     }
 
-    // FlipLinkageStyleController: isFlipped()→false, isUsingFlip()→true (kill switch).
+    // FlipLinkageStyleController: isFlipped()→true, isUsingFlip()→true (kill switch).
     private fun hookFlipLinkageStyleController(machineCl: ClassLoader) {
         runCatching {
             val ctrlClass = machineCl.loadClass("com.miui.aod.flip.FlipLinkageStyleController")

@@ -35,23 +35,27 @@ object CutoutAlwaysHook : BaseHook() {
             log("CutoutAlwaysHook: DISABLED by persist.flipunlock.display.cutout")
             return
         }
-        // camera 排除（2026-08-10）：camera 由 CameraReverseHook 恢复 flip 身份（属性读 4），
-        // 需要真实 cutout 做 flip 布局；本 hook 清零 cutout 会破坏 camera 布局。
-        if (param.packageName == "com.android.camera") {
-            log("CutoutAlwaysHook: skip camera (real cutout preserved for flip layout)")
-            return
-        }
-        log("CutoutAlwaysHook: loading for ${param.packageName}")
+        // 相机: 构造 cutout 方案(2026-08-19, refMD DisplayCutout §19/642f418)——
+        //   相机按 getCutout()!=null + getBoundingRect* 非 null 判断内外屏(flip 布局);
+        //   不再排除, 改为: Parser 清 mInsets/mPath 但保留 bounds(全屏 + 相机外屏识别)
+        //   + 跳过 #2/#3(getCutout→zero bounds 会覆盖保留的 bounds)。
+        val isCamera = param.packageName == "com.android.camera"
+        log("CutoutAlwaysHook: loading for ${param.packageName}${if (isCamera) " (相机构造 cutout: insets/path 清零保留 bounds)" else ""}")
         safeHook("CutoutAlwaysHook") {
-            hookParserParse(param.classLoader)
-            hookDisplayGetCutout(param.classLoader)
-            hookBoundingRects(param.classLoader)
+            hookParserParse(param.classLoader, isCamera)
+            if (!isCamera) {
+                hookDisplayGetCutout(param.classLoader)
+                hookBoundingRects(param.classLoader)
+            }
             forceCutoutModeAlways(param.classLoader)
         }
     }
 
-    // ── #1 CutoutSpecification.Parser.parse → zero ALL fields ──
-    private fun hookParserParse(classLoader: ClassLoader) {
+    // ── #1 CutoutSpecification.Parser.parse → zero fields ──
+    // 2026-08-19: camera 保留 bounds(相机 getBoundingRect* 非 null 判断外屏, refMD §19 实锤:
+    //   bounds 清零→getBoundingRectRight() null→CamLayoutManagerImpl NPE 闪退);
+    //   其他 app 全清(bounds 只影响 getBoundingRect*, 全屏避让看 mInsets)。
+    private fun hookParserParse(classLoader: ClassLoader, keepBounds: Boolean) {
         runCatching {
             val parserClass = classLoader.loadClass("android.view.CutoutSpecification\$Parser")
             val parseMethod = parserClass.method("parse", String::class.java)
@@ -59,11 +63,15 @@ object CutoutAlwaysHook : BaseHook() {
                 val spec = result ?: return@after result
                 spec.setField("mInsets", Insets.of(0, 0, 0, 0))
                 spec.setField("mPath", Path())
-                spec.setField("mLeftBound", Rect(0, 0, 0, 0))
-                spec.setField("mRightBound", Rect(0, 0, 0, 0))
-                spec.setField("mTopBound", Rect(0, 0, 0, 0))
-                spec.setField("mBottomBound", Rect(0, 0, 0, 0))
-                log("CutoutAlwaysHook: ✓ Parser.parse → zeroed ALL fields")
+                if (!keepBounds) {
+                    spec.setField("mLeftBound", Rect(0, 0, 0, 0))
+                    spec.setField("mRightBound", Rect(0, 0, 0, 0))
+                    spec.setField("mTopBound", Rect(0, 0, 0, 0))
+                    spec.setField("mBottomBound", Rect(0, 0, 0, 0))
+                    log("CutoutAlwaysHook: ✓ Parser.parse → zeroed ALL fields")
+                } else {
+                    log("CutoutAlwaysHook: ✓ Parser.parse → insets/path 清零, bounds 保留(camera)")
+                }
                 result
             })
         }.onFailure { log("CutoutAlwaysHook: #1 Parser.parse failed: ${it.message}") }

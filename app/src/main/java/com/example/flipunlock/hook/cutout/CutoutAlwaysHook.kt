@@ -35,27 +35,22 @@ object CutoutAlwaysHook : BaseHook() {
             log("CutoutAlwaysHook: DISABLED by persist.flipunlock.display.cutout")
             return
         }
-        // 相机: 构造 cutout 方案(2026-08-19, refMD DisplayCutout §19/642f418)——
-        //   相机按 getCutout()!=null + getBoundingRect* 非 null 判断内外屏(flip 布局);
-        //   不再排除, 改为: Parser 清 mInsets/mPath 但保留 bounds(全屏 + 相机外屏识别)
-        //   + 跳过 #2/#3(getCutout→zero bounds 会覆盖保留的 bounds)。
-        val isCamera = param.packageName == "com.android.camera"
-        log("CutoutAlwaysHook: loading for ${param.packageName}${if (isCamera) " (相机构造 cutout: insets/path 清零保留 bounds)" else ""}")
+        // 相机保护(2026-08-19 修正): 相机必须走 #2 Display.getCutout→非 null 构造 cutout
+        //   (90833c4 注释实锤 "Camera is protected by hookDisplayGetCutout (returns valid DisplayCutout)";
+        //   system_server CutoutZero 清了 mDisplayInfo.displayCutout → 相机 getCutout() 若为 null
+        //   → CamLayoutManagerImpl 读 getBoundingRectRight() null → rect.right NPE 闪退)。
+        //   统一处理所有 app(含相机): Parser 全清 + #2 非 null 空 cutout + #3 空 Rect + #4 ALWAYS。
+        log("CutoutAlwaysHook: loading for ${param.packageName}")
         safeHook("CutoutAlwaysHook") {
-            hookParserParse(param.classLoader, isCamera)
-            if (!isCamera) {
-                hookDisplayGetCutout(param.classLoader)
-                hookBoundingRects(param.classLoader)
-            }
+            hookParserParse(param.classLoader)
+            hookDisplayGetCutout(param.classLoader)
+            hookBoundingRects(param.classLoader)
             forceCutoutModeAlways(param.classLoader)
         }
     }
 
-    // ── #1 CutoutSpecification.Parser.parse → zero fields ──
-    // 2026-08-19: camera 保留 bounds(相机 getBoundingRect* 非 null 判断外屏, refMD §19 实锤:
-    //   bounds 清零→getBoundingRectRight() null→CamLayoutManagerImpl NPE 闪退);
-    //   其他 app 全清(bounds 只影响 getBoundingRect*, 全屏避让看 mInsets)。
-    private fun hookParserParse(classLoader: ClassLoader, keepBounds: Boolean) {
+    // ── #1 CutoutSpecification.Parser.parse → zero ALL fields ──
+    private fun hookParserParse(classLoader: ClassLoader) {
         runCatching {
             val parserClass = classLoader.loadClass("android.view.CutoutSpecification\$Parser")
             val parseMethod = parserClass.method("parse", String::class.java)
@@ -63,15 +58,11 @@ object CutoutAlwaysHook : BaseHook() {
                 val spec = result ?: return@after result
                 spec.setField("mInsets", Insets.of(0, 0, 0, 0))
                 spec.setField("mPath", Path())
-                if (!keepBounds) {
-                    spec.setField("mLeftBound", Rect(0, 0, 0, 0))
-                    spec.setField("mRightBound", Rect(0, 0, 0, 0))
-                    spec.setField("mTopBound", Rect(0, 0, 0, 0))
-                    spec.setField("mBottomBound", Rect(0, 0, 0, 0))
-                    log("CutoutAlwaysHook: ✓ Parser.parse → zeroed ALL fields")
-                } else {
-                    log("CutoutAlwaysHook: ✓ Parser.parse → insets/path 清零, bounds 保留(camera)")
-                }
+                spec.setField("mLeftBound", Rect(0, 0, 0, 0))
+                spec.setField("mRightBound", Rect(0, 0, 0, 0))
+                spec.setField("mTopBound", Rect(0, 0, 0, 0))
+                spec.setField("mBottomBound", Rect(0, 0, 0, 0))
+                log("CutoutAlwaysHook: ✓ Parser.parse → zeroed ALL fields")
                 result
             })
         }.onFailure { log("CutoutAlwaysHook: #1 Parser.parse failed: ${it.message}") }

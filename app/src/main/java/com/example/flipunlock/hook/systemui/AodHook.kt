@@ -67,6 +67,11 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  *     实测: 属性 4 原生外屏 cutout 运行时即为空(非 null 空实例), AOD 稳定不崩, 说明
  *     Display.getCutout() 在属性 4 下本就返回非 null(空), NPE 只在源头真变 null 时出现。
  *   - DozeMachine state flow 可跳过 DOZE_AOD; Layer 2 图遍历/classloader 可能部分不触发。
+ *   - ⚠ SystemUI 崩溃(2026-08-21, dropbox 8-19 起 14 次): DozeLifecycleOwner.initState
+ *     IllegalStateException "no event up from DESTROYED" —— static 单例 registry 在 dream
+ *     FINISH(ON_DESTROY) 后停在 DESTROYED, dream 进程内重建时 initState 无法恢复。
+ *     修复: hook initState, DESTROYED → 反射 mState=INITIALIZED(本文件 hookDozeLifecycleOwnerInitState,
+ *     层 B + L2 双时机)。
  *   - ⚠ 层 A(CutoutAlwaysHook #2) 全进程全局 Display.getCutout→空 cutout 在属性 4 下
  *     可能波及 TinyKeyguardPanel(2026-08-17 实测 hook Display.getCutout→NONE → 构造 NPE
  *     崩溃环; refMD §28.4-2)。本 hook 的"精准修"定位即避免该波及 —— 但层 A 若开启,
@@ -96,6 +101,9 @@ object AodHook : BaseHook() {
      *  错误的"已装"跳过, review 2026-08-20 should-fix #1)。 */
     @Volatile
     private var aodCutoutDefenseCl: ClassLoader? = null
+
+    /** DozeLifecycleOwner.initState 防崩 hook 已装的 classloader 集合(幂等, 同 loader 只装一次). */
+    private val initStateHookedCls = mutableSetOf<ClassLoader>()
 
     // ── Framework side (system_server) ──────────────────────────────────
 
@@ -237,6 +245,8 @@ object AodHook : BaseHook() {
             if (ok) {
                 aodCutoutDefenseCl = cl
                 log("AodHook: ✓ DisplayUtils.getCutoutPosition → CAMERA_CUTOUT_ON_NONE (AOD NPE 防御, cl=${cl})")
+                // 同 classloader 顺带装 DozeLifecycleOwner.initState 防崩(若 plugin 已加载)
+                hookDozeLifecycleOwnerInitState(cl)
                 return
             }
         }
@@ -257,6 +267,51 @@ object AodHook : BaseHook() {
             }
         }.onFailure { log("AodHook: allClassLoaders failed: ${it.message}") }
         return result
+    }
+
+    // ── DozeLifecycleOwner.initState 防崩(2026-08-21) ──
+    //
+    // 崩溃实锤(dropbox system_app_crash 8-19 起 14 次, 最新 8-21 21:27):
+    //   java.lang.IllegalStateException: no event up from DESTROYED
+    //     at LifecycleRegistry.forwardPass / sync / moveToState / setCurrentState
+    //     at com.miui.aod.DozeLifecycleOwner.initState(DozeLifecycleOwner.java:40)
+    //     at DozeFactory.assembleMachine → DozeService.create → MiuiDozeService.onCreate
+    // 机制(FlipRes/aod 实锤):
+    //   DozeLifecycleOwner 是 static 单例, mLifecycleRegistry(final) 跨 dream 周期复用;
+    //   DozeMachine 进 FINISH → performTransitionOnComponents → Part.transitionTo(FINISH)
+    //     → DozeLifecycleOwner: handleLifecycleEvent(ON_DESTROY) → registry=DESTROYED(终态)
+    //   → 下次 dream create → assembleMachine → initState → setCurrentState(INITIALIZED)
+    //     → LifecycleRegistry 拒绝从 DESTROYED forward → IllegalStateException → SystemUI 崩。
+    // 触发: 模块 hook(#3 强制亮屏/L2 强制 DOZE_AOD)使 dream 在同一进程内结束后重建
+    //   (原生 dream 结束→进程清理, 不复用 registry)。8-19 前无此崩溃, 模块引入。
+    // 修复: hook initState, before 若 registry 状态==DESTROYED → 反射直写 mState=INITIALIZED
+    //   (绕过 forwardPass 校验; observer 在 DESTROYED 时已 removeObserve, 状态一致)。
+    // 时机: 层 B(注入时, plugin 已加载则装) + L2(onDreamingStarted, machineCl 必达, 覆盖
+    //   第一次 dream 之后的所有 create)。
+    private fun hookDozeLifecycleOwnerInitState(cl: ClassLoader) {
+        if (!initStateHookedCls.add(cl)) return
+        runCatching {
+            val ownerCls = cl.loadClass("com.miui.aod.DozeLifecycleOwner")
+            val registryCls = cl.loadClass("androidx.lifecycle.LifecycleRegistry")
+            val stateCls = cl.loadClass("androidx.lifecycle.Lifecycle\$State")
+            val destroyed = stateCls.getField("DESTROYED").get(null)
+            val initialized = stateCls.getField("INITIALIZED").get(null)
+            val m = ownerCls.getDeclaredMethod("initState").apply { isAccessible = true }
+            hook(m, before { chain ->
+                runCatching {
+                    val owner = chain.thisObject
+                    val regField = ownerCls.getDeclaredField("mLifecycleRegistry").apply { isAccessible = true }
+                    val registry = regField.get(owner)
+                    val mStateField = registryCls.getDeclaredField("mState").apply { isAccessible = true }
+                    if (mStateField.get(registry) == destroyed) {
+                        mStateField.set(registry, initialized)
+                        log("AodHook: ✓ DozeLifecycleOwner registry DESTROYED→INITIALIZED (initState 防崩)")
+                    }
+                }.onFailure { log("AodHook: initState registry reset failed: ${it.message}") }
+                chain.proceed()
+            })
+            log("AodHook: ✓ DozeLifecycleOwner.initState 防崩 hook (cl=${cl})")
+        }.onFailure { log("AodHook: initState hook failed: ${it.message}") }
     }
 
     // ── #3/#4 framework DreamService (visible from SystemUI) ──
@@ -306,6 +361,12 @@ object AodHook : BaseHook() {
             val machineCl = machine.javaClass.classLoader
                 ?: run { log("AodHook/L2: DozeMachine classloader null"); return }
             log("AodHook/L2: found DozeMachine, cl=${machineCl.javaClass.simpleName}")
+
+            // DozeLifecycleOwner.initState 防崩(2026-08-21): DozeService.create 每次调 initState,
+            //   若上次 session 走到 FINISH(registry=DESTROYED) → setCurrentState(INITIALIZED) 抛
+            //   IllegalStateException "no event up from DESTROYED" → SystemUI 崩(dropbox 8-19 起 14 次)。
+            //   必须用真实 plugin classloader(machineCl) 装。
+            hookDozeLifecycleOwnerInitState(machineCl)
 
             // 层 B 补装: plugin classloader 此刻一定可见 com.miui.aod.* —— 覆盖注入早期
             // 候选都找不到 DisplayUtils 的场景(此时 startDozing 已过, 但翻转/重连仍会

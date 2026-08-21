@@ -46,13 +46,18 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  *     then with its classloader hook DozeMachine.requestState() (redirect
  *     DOZE/DOZE_SUSPEND/FINISH → DOZE_AOD), DozeService.setDozeScreenState() (same map
  *     as #3), DozeHost.isFullAod()→false, and FlipLinkageStyleController
- *     isFlipped()→true / isUsingFlip()→true.
- *     isFlipped→true(属性4版, 2026-08-19): refMD §30.6 —— isAodEnable 判定链
- *     isFlipDevice && isFlipped → controller.isUsingFlip() → FlipLinkage 外屏样式;
- *     flip1 恒折叠物理 isFlipped 本来就是 true(dealWithFlipChange L795 setFlipped(true)),
- *     hook true 与物理一致; 且 L792 `!isFlipped()&&!z` 恒 false → isFlipping 恒 false
+ *     isFlipped()→false / isUsingFlip()→true.
+ *     isFlipped→false(属性4版 v2, 2026-08-21): refMD §30 —— 用户需求: 外屏 AOD 显示
+ *     "内屏正常多样式息屏"(非 FlipLinkage 外屏简单时钟/萌宠)。判定链:
+ *     isAodEnable = isFlipDevice && isFlipped → isUsingFlip(FlipLinkage 外屏样式)
+ *                  : isAodSettingsEnabled()          ← 内屏标准多样式路径(目标)
+ *     isUsingLinkageStyle = isUsingFlip && isFlipped  ← hook false 后 = false, 不走 FlipLinkage。
+ *     hook false 同时保证: L792 `!isFlipped()&&!z` 恒 false → isFlipping 恒 false
  *     → 跳过 setAodVisibility(false)+600ms PAUSING 振荡(§30.3 不稳定源 1 被绕开)。
- *     isUsingFlip→true: kill switch(DozeMachine.resolveIntermediateState) 保活。
+ *     isUsingFlip→true 保留: kill switch(DozeMachine.resolveIntermediateState) +
+ *     dealWithFlipChange L806 PAUSING 存活分支 保活。
+ *     设置侧佐证: aod 设置页默认 full_screen_aod_on=1(息屏样式=和锁屏样式一致),
+ *     设计上外屏 AOD 本就走标准样式, FlipLinkage 是 flip 系列专属(萌宠等)。
  *
  * KNOWN RISKS (refMD §26/§28.4):
  *   - classloader 隔离: onPackageReady 的 classLoader 看不到 com.miui.aod.*。本版
@@ -378,7 +383,7 @@ object AodHook : BaseHook() {
         }.onFailure { log("AodHook/L2: DozeHost.isFullAod failed", it) }
     }
 
-    // FlipLinkageStyleController: isFlipped()→true, isUsingFlip()→true (kill switch).
+    // FlipLinkageStyleController: isFlipped()→false, isUsingFlip()→true (kill switch).
     private fun hookFlipLinkageStyleController(machineCl: ClassLoader) {
         runCatching {
             val ctrlClass = machineCl.loadClass("com.miui.aod.flip.FlipLinkageStyleController")
@@ -387,12 +392,22 @@ object AodHook : BaseHook() {
                 ?: run { log("AodHook/L2: FlipLinkageStyleController.INSTANCE null"); return }
             runCatching {
                 val m = ctrlClass.getDeclaredMethod("isFlipped").apply { isAccessible = true }
-                // [2026-08-19 属性4版] false→true: refMD §30 isAodEnable 判定链
-                //   isFlipDevice && isFlipped → controller.isUsingFlip() → FlipLinkage 外屏样式;
-                //   旧设计(false)让外屏 AOD 走内屏路径=默认样式(非外屏样式)。
-                //   AodHook 仅 flip1(flip2 SKIP), flip1 恒折叠 → isFlipped 真实=true, hook true 与物理一致。
-                hook(m, replaceResult(true))
-                log("AodHook/L2: FlipLinkageStyleController.isFlipped → true (外屏 AOD 走外屏样式, refMD §30)")
+                // [2026-08-21 属性4版 v2] true→false: 用户需求 = 外屏 AOD 显示"内屏正常多样式息屏",
+                //   而非 FlipLinkage 外屏样式(简单时钟/萌宠, flip 系列专属, 用户不要)。
+                //   判定链(FlipRes/aod 实锤, refMD §30):
+                //     isAodEnable = isFlipDevice && isFlipped → isUsingFlip(FlipLinkage 样式)
+                //                  : isAodSettingsEnabled()          ← 内屏标准多样式路径
+                //     isUsingLinkageStyle = isUsingFlip && isFlipped  ← 两者都 true 才走 FlipLinkage
+                //   → hook isFlipped=false: isAodEnable 走内屏路径(isAodSettingsEnabled), 且
+                //     isUsingLinkageStyle = true && false = false → 不走 FlipLinkage 萌宠/简单时钟。
+                //   存活链不受影响: DozeMachine.resolveIntermediateState kill switch =
+                //     isUsingFlip(true) || !isFlipped(false→true) → survive;
+                //     dealWithFlipChange L806 isUsingFlip(true) → DOZE_AOD_PAUSING 分支(AOD 不灭)。
+                //   注: dealWithFlipChange L795 setFlipped(true) 直写 static 字段, 读方法走本 hook → false。
+                //   设置侧佐证: aod 设置页 "息屏样式" 默认 full_screen_aod_on=1(和锁屏样式一致,
+                //   aod_resting_screen_same_to_lock), 设计上外屏 AOD 本就应走标准样式而非 FlipLinkage。
+                hook(m, replaceResult(false))
+                log("AodHook/L2: FlipLinkageStyleController.isFlipped → false (外屏 AOD 走内屏多样式息屏)")
             }.onFailure { log("AodHook/L2: isFlipped failed", it) }
             runCatching {
                 val m = ctrlClass.getDeclaredMethod("isUsingFlip", android.content.Context::class.java)

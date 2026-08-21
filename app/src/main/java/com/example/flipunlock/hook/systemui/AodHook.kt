@@ -198,6 +198,7 @@ object AodHook : BaseHook() {
             // 2026-08-20 设备实测基准(flip1 属性4 原生): 外屏 cutout 运行时即空(非 null 空实例),
             //   getCutoutPosition 原生返回 NONE → 本 hook 是"源头真变 null 时"的第二道保险。
             installAodCutoutDefense(param.classLoader)
+            hookFullAodEnable(param.classLoader)
             hookDreamService(param.classLoader)
         }
     }
@@ -206,6 +207,30 @@ object AodHook : BaseHook() {
         val at = Class.forName("android.app.ActivityThread")
         at.getMethod("currentProcessName").invoke(null) as? String
     }.getOrNull()
+
+    // ── MiuiFullAodManager.fullAodEnable() → false（2026-08-21, 方案 B）──
+    //
+    // 根因链(refMD AOD_Full_Chain, 2026-08-21 实锤 + 用户实测):
+    //   full_screen_aod_on=1(默认"和锁屏一致") → MiuiFullAodManager.mAodFullScreenEnable
+    //     → fullAodEnable()=isDeviceSupport&&mAodEnable&&mAodFullScreenEnable&&isFullAodSupport
+    //     → DozeServiceHostInjector.mFullAodEnable → mScreenOffNeedFullAodAnim
+    //     → MiuiDozeService tag → DozeHost.isFullAod()=true
+    //     → prepareAodViewAndShow 移除插件时钟容器 → 外屏 AOD=systemui 锁屏时钟+黑
+    //   用户实测: full_screen_aod_on=0 后外屏 AOD 变为 animate_clock_panel(内屏多样式) ✓
+    //   本 hook 让模块自动处理(不依赖设置): fullAodEnable→false → needFullAod=false
+    //   → 插件时钟容器保留 → 走 aod_category_name 多样式。
+    //   位置: systemui 主 classloader(com.android.keyguard.fullaod.MiuiFullAodManager),
+    //   注入即装(processClassLoader), 比 L2 的 DozeHost.isFullAod→false 更上游、无时序竞态。
+    //   开关: 与 displayAod 共用(persist.flipunlock.display.aod)。
+    private fun hookFullAodEnable(fallback: ClassLoader) {
+        runCatching {
+            val cl = processClassLoader(fallback)
+            val cls = cl.loadClass("com.android.keyguard.fullaod.MiuiFullAodManager")
+            val m = cls.getDeclaredMethod("fullAodEnable").apply { isAccessible = true }
+            hook(m, replaceResult(false))
+            log("AodHook: ✓ MiuiFullAodManager.fullAodEnable → false (外屏 AOD 走插件多样式)")
+        }.onFailure { log("AodHook: fullAodEnable failed: ${it.message}") }
+    }
 
     // ── 层 B: DisplayUtils.getCutoutPosition(Context) → CAMERA_CUTOUT_ON_NONE ──
     //

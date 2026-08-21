@@ -374,11 +374,16 @@ object AodHook : BaseHook() {
             hook(method) { chain ->
                 val state = chain.args[0] as? Int ?: return@hook chain.proceed()
                 when (state) {
-                    0, 1, 3, 4 -> {
+                    // 2026-08-21 修复: state=0(FINISH/OFF) 必须放行 —— dream 结束时
+                    //   setDozeScreenState(0) 是正常熄屏, 之前强制→2 导致屏幕停在 ON 亮屏
+                    //   但系统 wakefulness=Dozing + dream 已死(触摸 surface 移除)
+                    //   → doze 态触摸无人处理 = "看似锁屏但触摸无反应"卡死(用户实测复现)。
+                    //   0 只在 FINISH/COVERMODE 出现, AOD 显示期间(DOZE_AOD=4)不会 0, 放行安全。
+                    1, 3, 4 -> {
                         log("AodHook: #3 setDozeScreenState($state) → 2 (ON 亮屏, 旧版方案)")
                         chain.proceed(arrayOf<Any?>(2))
                     }
-                    else -> chain.proceed()   // 2 (ON) pass through
+                    else -> chain.proceed()   // 0(OFF 熄屏) 与 2 (ON) pass through
                 }
             }
             log("AodHook: #3 DreamService.setDozeScreenState hooked [旧版: →2 亮屏]")
@@ -476,7 +481,8 @@ object AodHook : BaseHook() {
             hook(method) { chain ->
                 val s = chain.args[0] as? Int ?: return@hook chain.proceed()
                 when (s) {
-                    0, 1, 3, 4 -> chain.proceed(arrayOf<Any?>(2))
+                    // 2026-08-21 修复: 0(FINISH/OFF) 放行(与 #3 同步, dream 结束正常熄屏)
+                    1, 3, 4 -> chain.proceed(arrayOf<Any?>(2))
                     else -> chain.proceed()
                 }
             }

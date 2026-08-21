@@ -8,78 +8,55 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
 /**
  * Always-On Display on the outer (cover) screen when folded.
  *
- * AOD is the most tangled feature in this module (refMD: FoldState_Device_Identity.md
- * §25 AOD/Doze architecture, §26 AOD app layer, §30.6 属性4 终版判定链; DisplayCutout.md §28
- * 正常折叠 AOD 启用 + cutout 崩溃链). Two cooperating sides:
+ * AOD 全貌: refMD AOD_Full_Chain.md(2026-08-21 双 agent 全量梳理, 权威) + FoldState §25/§26/§30。
+ * 属性 4 恒折叠下: 外屏 AOD = group0 默认 display 上的标准单屏 dream(无 rear 机制,
+ * framework 侧 #1/#2 无效已注释); 样式由 CategoryFactory FlipLinkage 替换(isUsingFlip &&
+ * !isAodProcess && isFlipped && isTinyScreen)与 fullAodEnable(needFullAod)共同决定。
  *
- * ── Framework side (system_server) — keeps the rear dream alive ──
- *   PowerManagerService.handleRearSandman(groupId=1):
- *     if (!mRearAlwaysOnEnabled && wakefulness==3) → sleepPowerGroup (NO AOD)
- *   #1 updateRearDozeSettings(groupId, alwaysOn, isFullAod): force alwaysOn+isFullAod
- *      for groupId 1 so handleRearSandman starts the dream instead of sleeping.
- *   #2 DreamController.stopDream(force, reason): block the "slow to connect"/
- *      "slow to finish" timeout kills for groupId 1 (the AOD dream connects slowly
- *      and would otherwise be torn down after ~5s).
- *   NOTE: MiuiFlipPolicy/DisplayManagerServiceImpl.shouldDeviceBeSleep()→false are
- *   deliberately NOT hooked — blocking sleep prevents the dream from ever starting
- *   (the old project commented them out for exactly this reason).
+ * ── 2026-08-21 精简后实际生效的 hook(核心方案) ──
+ *   1. hookFullAodEnable: MiuiFullAodManager.fullAodEnable()→false (systemui 主 CL)
+ *      —— 根治"外屏 AOD=锁屏时钟+黑"(full_screen_aod_on=1 默认 SameToLock → needFullAod
+ *      → 移除插件时钟容器 → systemui 锁屏时钟)。false 后走插件时钟(aod_category_name 多样式)。
+ *   2. hookMiuiDozeServiceOnCreate → installInitStateDefense:
+ *      DozeLifecycleOwner.initState 防崩(static 单例 registry 在 dream FINISH 后停 DESTROYED,
+ *      同进程再次 create 抛 IllegalStateException → SystemUI 崩溃环; 用户复现: 锁屏→电源→
+ *      AOD→电源→锁屏→崩溃重绘)。onCreate(systemui 主 CL, 注入即装) after 时 plugin 必已加载
+ *      → 遍历 classloader 装 initState 防崩(反射 mState DESTROYED→INITIALIZED)。
+ *   3. #3 DreamService.setDozeScreenState {0,1,3,4}→2 (ON 亮屏): flip1 实测 4 不亮、2 必亮。
+ *   4. L2(onDreamingStarted, machineCl):
+ *      - DozeService.setDozeScreenState {0,1,3,4}→2(与 #3 同, plugin 层双保险)
+ *      - FlipLinkageStyleController.isFlipped()→false: 切断 CategoryFactory FlipLinkage
+ *        替换(否则外屏 AOD 被强制换成 FlipLinkage 萌宠/简单时钟), isAodEnable 走
+ *        isAodSettingsEnabled 内屏标准路径 = 多样式(用户目标)
+ *      - DozeLifecycleOwner.initState 防崩(machineCl, 双保险)
  *
- * ── App side (com.android.systemui / com.miui.aod) — force the AOD screen state ──
- *   The AOD classes (com.miui.aod.*) live in MIUIAod.apk under a SEPARATE classloader
- *   that onPackageReady's classLoader cannot see. Three layers:
- *   Layer 0 (framework, visible from SystemUI — runs FIRST, defuses the NPE):
- *     AOD cutout defense: com.miui.aod.util.DisplayUtils.getCutoutPosition(Context)
- *     → Direction.CAMERA_CUTOUT_ON_NONE. 实锤(FlipRes/aod DisplayUtils.java:18-29):
- *     `cutout = context.getDisplay().getCutout(); cutout.getBoundingRectLeft()...`
- *     无 null 检查。调用点全包唯一 = DozeHost.dealWithFlipChange L796(startDozing L601,
- *     refMD §28.2 崩溃链)。若 getCutout()==null → NPE → SystemUI crash-loop(每~7s)。
- *     ⚠ 与 CutoutAlwaysHook #2 的分工: #2 是全进程全局 hook Display.getCutout→非 null 空
- *     cutout(主防线, 但属性 4 下会波及 TinyKeyguardPanel, 见下"KNOWN RISKS"); 本 hook
- *     是 AOD 内精准防御(第二道, 不动全局 getCutout)。
- *   Layer 1 (framework DreamService, visible from SystemUI):
- *     #3 DreamService.setDozeScreenState(int): 全状态 {0,1,3,4} → 2 (ON 亮屏).
- *        flip1 实测(1ae7af5): DOZE_AOD(4) 方案物理屏不显示, 2(亮屏 ON) 必亮 ——
- *        AOD 内容渲染在亮屏状态。0=FINISH 1=DOZE 2=ON/PULSING 3=DOZE_SUSPEND 4=DOZE_AOD.
- *     #4 DreamService.onDreamingStarted(): one-shot trigger for Layer 2.
- *   Layer 2 (runtime, via the DozeMachine instance's OWN classloader):
- *     walk the object graph from the DreamService to find com.miui.aod.doze.DozeMachine,
- *     then with its classloader hook DozeMachine.requestState() (redirect
- *     DOZE/DOZE_SUSPEND/FINISH → DOZE_AOD), DozeService.setDozeScreenState() (same map
- *     as #3), DozeHost.isFullAod()→false, and FlipLinkageStyleController
- *     isFlipped()→false / isUsingFlip()→true.
- *     isFlipped→false(属性4版 v2, 2026-08-21): refMD §30 —— 用户需求: 外屏 AOD 显示
- *     "内屏正常多样式息屏"(非 FlipLinkage 外屏简单时钟/萌宠)。判定链:
- *     isAodEnable = isFlipDevice && isFlipped → isUsingFlip(FlipLinkage 外屏样式)
- *                  : isAodSettingsEnabled()          ← 内屏标准多样式路径(目标)
- *     isUsingLinkageStyle = isUsingFlip && isFlipped  ← hook false 后 = false, 不走 FlipLinkage。
- *     hook false 同时保证: L792 `!isFlipped()&&!z` 恒 false → isFlipping 恒 false
- *     → 跳过 setAodVisibility(false)+600ms PAUSING 振荡(§30.3 不稳定源 1 被绕开)。
- *     isUsingFlip→true 保留: kill switch(DozeMachine.resolveIntermediateState) +
- *     dealWithFlipChange L806 PAUSING 存活分支 保活。
- *     设置侧佐证: aod 设置页默认 full_screen_aod_on=1(息屏样式=和锁屏样式一致),
- *     设计上外屏 AOD 本就走标准样式, FlipLinkage 是 flip 系列专属(萌宠等)。
+ * ── 已注释(2026-08-21, 基于 AOD_Full_Chain 全貌) ──
+ *   #1 updateRearDozeSettings/#2 stopDream(groupId==1): 属性 4 无 group1 rear 机制, 永不触发
+ *   层 B getCutoutPosition→NONE: 属性 4 原生 getCutout 非 null 空(不 NPE), CutoutZero 在
+ *     flip1 不生效 → 无用
+ *   L2 requestState 强制 DOZE_AOD/FINISH→DOZE_AOD: 干扰 dream 生命周期(FINISH 被拦→状态
+ *     不一致→崩溃环嫌疑); 原生可自然到 DOZE_AOD, kill switch 由 isFlipped→false 兜底
+ *   L2 DozeHost.isFullAod→false: 上游 fullAodEnable→false 已覆盖
+ *   L2 isUsingFlip→true: 属性 4 原生就是 true, 冗余
  *
- * KNOWN RISKS (refMD §26/§28.4):
- *   - classloader 隔离: onPackageReady 的 classLoader 看不到 com.miui.aod.*。本版
- *     层 B 用多 classloader 候选(进程 Application / 回调 classLoader / ActivityThread
- *     mAllClassLoaders 遍历), 并在 Layer 2(拿到 DozeMachine 的 classloader)后补装。
- *     若仍装不上, 依赖 CutoutAlwaysHook #2(非 null 空 cutout)兜底 —— 2026-08-20 设备
- *     实测: 属性 4 原生外屏 cutout 运行时即为空(非 null 空实例), AOD 稳定不崩, 说明
- *     Display.getCutout() 在属性 4 下本就返回非 null(空), NPE 只在源头真变 null 时出现。
+ * KNOWN RISKS (refMD §26/§28.4/AOD_Full_Chain):
+ *   - classloader 隔离: com.miui.aod.* 在 MIUIAod.apk 独立 plugin classloader。
  *   - DozeMachine state flow 可跳过 DOZE_AOD; Layer 2 图遍历/classloader 可能部分不触发。
- *   - ⚠ SystemUI 崩溃(2026-08-21, dropbox 8-19 起 14 次): DozeLifecycleOwner.initState
- *     IllegalStateException "no event up from DESTROYED" —— static 单例 registry 在 dream
- *     FINISH(ON_DESTROY) 后停在 DESTROYED, dream 进程内重建时 initState 无法恢复。
- *     修复: hook initState, DESTROYED → 反射 mState=INITIALIZED(本文件 hookDozeLifecycleOwnerInitState,
- *     层 B + L2 双时机)。
- *   - ⚠ 层 A(CutoutAlwaysHook #2) 全进程全局 Display.getCutout→空 cutout 在属性 4 下
- *     可能波及 TinyKeyguardPanel(2026-08-17 实测 hook Display.getCutout→NONE → 构造 NPE
- *     崩溃环; refMD §28.4-2)。本 hook 的"精准修"定位即避免该波及 —— 但层 A 若开启,
- *     全局 getCutout 已被替换, 精准修仅作为第二道保险, 二者叠加行为需装机实测。
- *   - FlipLinkageClock 视觉(§28.4-4): getClockOrientation() 驱动时钟旋转/挖孔避让
- *     margin(FlipLinkageClock.java:596)。hook NONE = 时钟按无挖孔布局。2026-08-20 设备
- *     实测: 属性 4 原生 cutout 为空 → 原生 getCutoutPosition 本就返回 NONE → 与 hook 结果
- *     一致, 无新增视觉变化。
+ *   - isFlipped→false 的完整影响: isUsingLinkageStyle = isUsingFlip && isFlipped → false
+ *     不走 FlipLinkage; isAodEnable 走 isAodSettingsEnabled 内屏标准路径(多样式目标);
+ *     L792 `!isFlipped()&&!z` 恒 false → isFlipping 恒 false → 跳过 setAodVisibility(false)
+ *     +600ms PAUSING 振荡(§30.3 不稳定源 1 被绕开); kill switch
+ *     (isUsingFlip||!isFlipped) 由 isFlipped→false 兜底 survive。
+ *   - ⚠ SystemUI 崩溃环(2026-08-21 晚用户复现: 锁屏→电源→内屏AOD→电源→锁屏→崩溃重绘;
+ *     dropbox 8-19 起): DozeLifecycleOwner.initState "no event up from DESTROYED" —
+ *     static 单例 registry 在 dream FINISH(ON_DESTROY) 后停 DESTROYED, 同进程再次
+ *     create(dream 重建)时 initState 无法恢复 → SystemUI 崩 → 重启 → 复现。
+ *     修复: hookDozeLifecycleOwnerInitState(反射 mState DESTROYED→INITIALIZED), 装载时机
+ *     = MiuiDozeService.onCreate after(plugin 必已加载, 注入即装) + L2(machineCl) 双保险。
+ *   - #3 强制 state 2(ON 全亮)的功耗代价: AOD 以全亮度显示 vs 原生 doze 低亮度 —
+ *     flip1 实测 4 不亮、2 必亮(1ae7af5); 若 4 能通过其他手段点亮可省电。
+ *   - 层 A(CutoutAlwaysHook #2) 全进程 Display.getCutout→空 cutout 在属性 4 下可能波及
+ *     TinyKeyguardPanel(2026-08-17 实测 NONE → 构造 NPE; refMD §28.4-2)——与 AodHook 正交。
  *
  * Toggle: persist.flipunlock.display.aod (default true)
  */
@@ -119,8 +96,10 @@ object AodHook : BaseHook() {
         }
         log("AodHook(framework): setting up")
         safeHook("AodHook") {
-            hookUpdateRearDozeSettings(param.classLoader)
-            hookStopDream(param.classLoader)
+            // DISABLED (2026-08-21, AOD_Full_Chain §2): 属性 4 无 group1 rear 机制,
+            //   #1/#2 永不触发 —— 外屏 AOD = group0 单屏标准 dream。
+            // hookUpdateRearDozeSettings(param.classLoader)
+            // hookStopDream(param.classLoader)
         }
     }
 
@@ -197,8 +176,11 @@ object AodHook : BaseHook() {
             //   不影响全局 Display.getCutout(TinyKeyguardPanel 依赖物理 cutout 不受影响)。
             // 2026-08-20 设备实测基准(flip1 属性4 原生): 外屏 cutout 运行时即空(非 null 空实例),
             //   getCutoutPosition 原生返回 NONE → 本 hook 是"源头真变 null 时"的第二道保险。
-            installAodCutoutDefense(param.classLoader)
+            // DISABLED (2026-08-21, 精简): 属性 4 原生 getCutout 非 null 空, 不 NPE;
+            //   CutoutZero(system_server) 在 flip1 注入不可靠不生效 → 层 B 无实际作用。
+            // installAodCutoutDefense(param.classLoader)
             hookFullAodEnable(param.classLoader)
+            hookMiuiDozeServiceOnCreate(param.classLoader)
             hookDreamService(param.classLoader)
         }
     }
@@ -207,6 +189,45 @@ object AodHook : BaseHook() {
         val at = Class.forName("android.app.ActivityThread")
         at.getMethod("currentProcessName").invoke(null) as? String
     }.getOrNull()
+
+    // ── MiuiDozeService.onCreate → 补装 initState 防崩（2026-08-21 晚, 根治崩溃环）──
+    //
+    // 崩溃环复现实锤(用户 2026-08-21 晚: 锁屏→电源→内屏AOD→电源→锁屏→崩溃重绘;
+    //  logcat 22:23:51/22:24:10 连续两次 SystemUI 崩于 MiuiDozeService.onCreate →
+    //  DozeServicePluginImpl.setDozeRequester → DozeService.create → assembleMachine →
+    //  DozeLifecycleOwner.initState "no event up from DESTROYED"):
+    //   static 单例 registry 在 dream FINISH(ON_DESTROY) 后停 DESTROYED, 同进程再次
+    //   create(dream 重建)时 initState 无法恢复 → SystemUI 崩 → 重启 → 复现。
+    //  旧防崩(3477c83)装载时机有漏洞: 层 B(注入时) plugin classloader 未加载→装不上;
+    //   L2(onDreamingStarted) 晚于崩溃点(崩溃在 onCreate, 早于 onDreamingStarted)。
+    // 本 hook: MiuiDozeService.onCreate(systemui 主 classloader, 注入即装) after →
+    //   plugin 此刻必已加载(setDozeRequester 就在 onCreate 内执行) → 遍历 classloader
+    //   补装 initState 防崩 → 覆盖之后所有 create 的 initState。
+    private fun hookMiuiDozeServiceOnCreate(fallback: ClassLoader) {
+        runCatching {
+            val cl = processClassLoader(fallback)
+            val cls = cl.loadClass("com.android.keyguard.doze.MiuiDozeService")
+            val m = cls.getDeclaredMethod("onCreate").apply { isAccessible = true }
+            hook(m, after { chain, result ->
+                installInitStateDefense(cl)
+                result
+            })
+            log("AodHook: ✓ MiuiDozeService.onCreate hooked (initState 防崩补装点)")
+        }.onFailure { log("AodHook: MiuiDozeService.onCreate hook failed: ${it.message}") }
+    }
+
+    /** 遍历候选 classloader 补装 DozeLifecycleOwner.initState 防崩(幂等). */
+    private fun installInitStateDefense(fallback: ClassLoader) {
+        val candidates = buildList {
+            add(processClassLoader(fallback))
+            addAll(allClassLoaders())
+        }.distinct()
+        for (c in candidates) {
+            runCatching { c.loadClass("com.miui.aod.DozeLifecycleOwner") }
+                .onSuccess { hookDozeLifecycleOwnerInitState(c) }
+        }
+        log("AodHook: installInitStateDefense 完成 (candidates=${candidates.size})")
+    }
 
     // ── MiuiFullAodManager.fullAodEnable() → false（2026-08-21, 方案 B）──
     //
@@ -398,7 +419,8 @@ object AodHook : BaseHook() {
             // 再走 dealWithFlipChange, 且 CutoutZero 若致 null 后续 dream 周期仍需防御)。
             // 若 setupHooks 阶段已装到别的 classloader(非真实 AOD loader), 也在此补装
             // 真实 loader 那一份(review 2026-08-20 should-fix #1)。
-            if (aodCutoutDefenseCl != machineCl) {
+            // DISABLED (2026-08-21, 与层 B 同步精简, 见 installAodCutoutDefense 注释)
+            if (false && aodCutoutDefenseCl != machineCl) {
                 runCatching {
                     val duCls = machineCl.loadClass("com.miui.aod.util.DisplayUtils")
                     val dirCls = machineCl.loadClass("com.miui.aod.widget.Direction")
@@ -414,13 +436,17 @@ object AodHook : BaseHook() {
             val values = stateClass.getMethod("values").invoke(null) as Array<*>
             val dozeAod = values.first { it.toString() == "DOZE_AOD" }
 
+            // DISABLED (2026-08-21, 精简): 强制 DOZE_AOD / FINISH→DOZE_AOD 重定向
+            //   干扰 dream 生命周期(FINISH 被拦 → 状态与实际不一致 → 崩溃环嫌疑)。
+            //   原生流程: INITIALIZED → resolveIntermediateState → DOZE_AOD(aodGone=false)
+            //   + kill switch(isUsingFlip||!isFlipped) survive, 无需强制。
             // Force AOD immediately.
-            runCatching { machine.callMethod("requestState", dozeAod) }
-                .onFailure { log("AodHook/L2: initial requestState(DOZE_AOD) failed", it) }
-
-            hookRequestState(machine, stateClass, dozeAod)
+            // runCatching { machine.callMethod("requestState", dozeAod) }
+            //     .onFailure { log("AodHook/L2: initial requestState(DOZE_AOD) failed", it) }
+            // hookRequestState(machine, stateClass, dozeAod)
             hookDozeServiceSetDozeScreenState(dreamService)
-            hookDozeHostIsFullAod(dreamService)
+            // DISABLED (2026-08-21, 精简): fullAodEnable→false 已上游覆盖
+            // hookDozeHostIsFullAod(dreamService)
             hookFlipLinkageStyleController(machineCl)
         }.onFailure { log("AodHook/L2: installRuntimeHooks failed", it) }
     }
@@ -498,8 +524,11 @@ object AodHook : BaseHook() {
             runCatching {
                 val m = ctrlClass.getDeclaredMethod("isUsingFlip", android.content.Context::class.java)
                     .apply { isAccessible = true }
-                hook(m, replaceResult(true))
-                log("AodHook/L2: FlipLinkageStyleController.isUsingFlip → true")
+                // DISABLED (2026-08-21, 精简): 属性 4 原生 isUsingFlip 就是 true
+                //   (isFlipDevice && doze_always_on==1); kill switch 由 isFlipped→false 兜底,
+                //   L806 PAUSING 保活分支原生也走 isUsingFlip=true。hook 冗余。
+                // hook(m, replaceResult(true))
+                log("AodHook/L2: isUsingFlip 原生 true, 无需 hook (精简)")
             }.onFailure { log("AodHook/L2: isUsingFlip failed", it) }
         }.onFailure { log("AodHook/L2: FlipLinkageStyleController not found", it) }
     }

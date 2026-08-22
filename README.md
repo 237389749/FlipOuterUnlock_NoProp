@@ -1,8 +1,10 @@
-# FlipOuterUnlock2 — MIX Flip Outer Screen Unlock Module
+# FlipOuterUnlock_NoProp — MIX Flip 外屏模块（无属性层版）
 
-> LSPosed module for Xiaomi MIX Flip — make the outer screen behave like a normal phone display.
+> LSPosed module for Xiaomi MIX Flip — **属性 4（flip 原生）形态**：不伪装手机、不需要 KSU 属性层，
+> 保持 fliphome 原生外屏桌面。集 90833c4 / unlock2 / Lite / 262 各项目之力，只保留属性 4 下真实有用的修复。
 
-**One-liner**: Remove cutout, force fullscreen, unlock apps, spoof device identity, fix control center, fix Sogou IME, enable AOD on outer screen.
+**One-liner**: cutout 全清全局全屏、禁用 size-compat letterbox、外屏 AOD（内屏多样式）、
+外屏 IME 自由、手电筒直开、控制中心/通知菜单修复、fliphome 小部件三件套。
 
 [English](#english) | [中文](#chinese)
 
@@ -11,237 +13,179 @@
 <a name="english"></a>
 ## English
 
-### Features
+### Features (by hook)
 
 **Display & Fullscreen**
-- Remove cutout — zero `CutoutSpecification.Parser` fields + defensive `Display.getCutout()` zero injection for camera process
-- Force fullscreen — disable MIUI flip size-compat letterbox in system_server (`getFlipCompatModeByApp/Activity → 0`, `getFullScreenValue → 0`, `getGlobalScale → 1.0f`) + disable size-compat mode in app processes (`inMiuiSizeCompatScaleMode → false`, `getSizeCompatBounds → null`)
-- Dual display — force display state=6
+- **Cutout 全清（双端）** — `CutoutZeroHook`（system_server 源头清零：`calculateDisplayCutoutForRotation→NO_CUTOUT` + `pathAndDisplayCutoutFromSpec` + `InsetsState.getDisplayCutoutSafe` + `fromResourcesRectApproximation`）+ `CutoutAlwaysHook`（全进程非 null 空 cutout 构造 → 全局全屏，含相机防御）
+- **Force fullscreen** — `AppFullscreen`（禁用 MIUI flip size-compat letterbox，app 端 `getLayoutInDisplayCutoutMode→ALWAYS`）
 
-**Device Identity**
-- Spoof device type — hook 7 detection groups: `MiuiMultiDisplayTypeInfo`, `miui.os.Build`, `miuix.os.Build` (incl. `IS_FOLD_INSIDE/OUTSIDE` static field clearing), `DeviceUtils`, `DeviceHelper`, `MiuiConfigs`, defensive static field clearing. Excludes SystemUI and Sogou IME
-- Screen type spoof — `Configuration.getScreenType() → 0` (EXPAND), makes all processes believe they run on the primary screen
-
-**App Management**
-- Remove outer screen app launch restrictions
-- System app whitelist
-- App continuity — keep running app alive across fold/unfold
+**App**
+- `AppWhitelist` — outer-screen app launch whitelist（allowstart 放行）
 
 **IME & Input**
-- Enable keyboard in landscape + suppress rotation toast
-- Unlock IME choice — prevent forced Sogou switch on outer screen
-- Sogou toolbar + clipboard fix (DexKit)
+- `InputMethodHook` — outer-screen IME freedom（`shouldShowCurrentInput→true`、旋转 toast 抑制）
+- `SogouInputHook` — Sogou IME layout fixes
+
+**AOD（outer-screen always-on display）**
+- `AodHook` — outer-screen AOD shows **inner-screen multi-style clock**（`MiuiFullAodManager.fullAodEnable→false` 切断"锁屏时钟+黑" + `isFlipped→false` 切断 FlipLinkage 样式）; 亮屏（`setDozeScreenState {1,3,4}→2`, flip1 实测 4 不亮 2 亮）; `DozeLifecycleOwner.initState` 崩溃防崩（`MiuiDozeService.onCreate` 补装, 修 SystemUI 崩溃环）
 
 **SystemUI**
-- Bypass flashlight flip-to-turn-on prompt
-- Control center compact mode fix — restore QS tile editing
-- Global `isTinyScreen→false` — fix modal menu, icon clipping, carrier text, control center layout
-- Notification icon limit expansion — defense-in-depth for icon clipping
+- `FlashlightHook` — flashlight flip-prompt bypass + direct toggle
+- `ControlCenterHook` — flip control-center COMPACT edit button（移植 MixFlipMod, unlock2 重写）
+- `NotifMenuFixHook` — outer-screen notification menu in normal-phone style
 
 **fliphome**
-- Widget overlay removal
-- Recents cache refresh
-
-**AOD**
-- Always-On Display enabled on outer screen when folded
-
-**Gestures**
-- Double-tap-to-sleep on outer screen
+- `WidgetRemove` — cover-screen widget overlay removal
+- `RecentsCacheFix` — recents cache refresh
+- `WidgetTouchPassthrough` — widget touch passthrough
 
 ### Hook Architecture
 
 ```
 onSystemServerStarting (system_server):
-├── AppRestriction          ← remove outer screen app restrictions
-├── AppWhitelist            ← system app whitelist
-├── CutoutRemove            ← remove cutout (Parser.parse + camera defense)
-├── AppFullscreen (#1-#4)   ← fullscreen compat (system_server side)
-├── AppContinuity           ← fold/unfold app continuity
-├── InputMethodHook         ← IME rotation/choice unlock
-├── SubScreenGesture        ← double-tap-to-sleep
-└── DisplayState            ← force state=6 dual display
+├── CutoutZeroHook         ← cutout 源头清零（4 层, refMD DisplayCutout §16-18）
+├── AppFullscreen          ← size-compat letterbox 禁用
+├── AppWhitelist           ← 外屏 app 白名单
+├── InputMethodHook        ← IME 自由
+└── AodHook.hookFramework  ← AOD framework 侧（flip1; 内部 hook 已精简, 保留入口）
 
 onPackageReady:
-├── AppFullscreen.hookApp (#5-#6) ← app-side size-compat disable (excl. SystemUI, Sogou)
-├── DeviceIdentityHook [*]        ← device identity spoof (7 hook groups, excl. SystemUI, Sogou)
-├── ScreenTypeHook [*]            ← Configuration.getScreenType → 0 (EXPAND)
-├── WidgetRemove [fliphome]       ← widget overlay removal
-├── RecentsCacheFix [fliphome]    ← recents cache refresh
-├── AodHook [aod]                 ← outer screen AOD enable
-├── FlashlightHook [systemui]     ← flashlight flip prompt bypass
-├── ControlCenterHook [systemui]  ← control center compact fix
-├── StatusBarHook [systemui]      ← isTinyScreen→false + icon limit expansion
-└── SogouInputHook [sogou]        ← Sogou toolbar + clipboard fix (DexKit)
+├── CutoutAlwaysHook [*]         ← 全进程非 null 空 cutout → 全局全屏（相机防御）
+├── AodHook [systemui/aod]       ← 外屏 AOD 多样式 + 亮屏 + initState 崩溃防崩
+├── FlashlightHook [systemui]    ← 手电筒直开
+├── ControlCenterHook [systemui] ← 控制中心 COMPACT 编辑按钮
+├── NotifMenuFixHook [systemui]  ← 通知菜单普通样式
+├── SogouInputHook [sogou]       ← 输入法修复
+├── WidgetRemove [fliphome]      ← 小部件移除
+├── RecentsCacheFix [fliphome]   ← 最近任务缓存
+└── WidgetTouchPassthrough [fliphome] ← 小部件触摸透传
 ```
 
 ### Feature Toggles
 
-All features can be individually disabled via `setprop`. Changes take effect after reboot. No UI.
+All features individually disableable via `setprop`（reboot 后生效, 无 UI）:
 
 ```bash
-# List current settings
-getprop | grep persist.flipunlock
-
-# Disable a feature (example)
-setprop persist.flipunlock.display.cutout false
-reboot
+getprop | grep persist.flipunlock          # list
+setprop persist.flipunlock.display.aod false && reboot   # example
 ```
 
 | Property | Default | Controls |
 |----------|---------|----------|
-| `persist.flipunlock.enable` | true | **Master kill switch** |
-| `persist.flipunlock.display.dual` | true | Dual display (DisplayState) |
-| `persist.flipunlock.display.aod` | true | Outer screen AOD |
-| `persist.flipunlock.display.cutout` | true | Remove cutout |
+| `persist.flipunlock.enable` | true | **Master switch** |
+| `persist.flipunlock.display.aod` | true | Outer-screen AOD (AodHook) |
+| `persist.flipunlock.display.cutout` | true | Cutout 全清 (CutoutZeroHook + CutoutAlwaysHook) |
 | `persist.flipunlock.display.fullscreen` | true | Force fullscreen (AppFullscreen) |
-| `persist.flipunlock.app.continuity` | true | Fold/unfold continuity |
-| `persist.flipunlock.ime` | true | IME freedom |
-| `persist.flipunlock.ui.widget` | true | Widget overlay removal |
-| `persist.flipunlock.ui.controlcenter` | true | Control center fix |
+| `persist.flipunlock.app.whitelist` | true | App whitelist (AppWhitelist) |
+| `persist.flipunlock.ime` | true | IME freedom (InputMethodHook + SogouInputHook) |
+| `persist.flipunlock.systemui.flashlight` | true | Flashlight (FlashlightHook) |
+| `persist.flipunlock.ui.controlcenter` | true | Control center (ControlCenterHook) |
+| `persist.flipunlock.ui.notifmenu` | true | Notification menu (NotifMenuFixHook) |
+| `persist.flipunlock.ui.widget` | true | Widget overlay removal (WidgetRemove + WidgetTouchPassthrough) |
+| `persist.flipunlock.ui.recentsmenu` | true | Recents cache (RecentsCacheFix) |
 
 ### LSP Scope
 
 system, systemui, aod, camera, fliphome, sogou, miuihome, gallery
 
-### Requirements
+### Requirements / Build
 
-- LSPosed (libxposed API 101+)
-- Xiaomi MIX Flip
-- HyperOS
+- LSPosed（libxposed API 101+）、Xiaomi MIX Flip、HyperOS
+- `./gradlew :app:assembleDebug`；CI：push `main` 自动构建
 
-### Build
+### Credits & License
 
-```bash
-./gradlew :app:assembleDebug
-```
-
-CI: push to `master` branch triggers automatic build.
-
-### Credits
-
-- [MixFlipMod](https://github.com/parallelcc/MixFlipMod) by Parallelc — LSPosed architecture, SogouHook, DexKit reference
-- `refMD/cleaned/` — MIUI framework decompiled analysis docs
-
-### License
-
-AGPL-3.0
+- [MixFlipMod](https://github.com/parallelcc/MixFlipMod) — ControlCenter/NotifMenu 移植参考
+- `refMD/cleaned/` — MIUI 反编译分析（`AOD_Full_Chain.md` = AOD 全貌权威文档）
+- AGPL-3.0
 
 ---
 
 <a name="chinese"></a>
 ## 中文
 
-### 功能
+### 功能（按 hook 列）
 
 **显示与全屏**
-- 移除挖孔 — `CutoutSpecification.Parser` 字段清零 + camera 进程防御性 `Display.getCutout()` 零值注入
-- 强制全屏 — system_server 端禁用 MIUI flip size-compat letterbox（`getFlipCompatModeByApp/Activity → 0`、`getFullScreenValue → 0`、`getGlobalScale → 1.0f`）+ app 端关闭 size-compat 模式（`inMiuiSizeCompatScaleMode → false`、`getSizeCompatBounds → null`）
-- 双屏显示 — 强制 display state=6
+- **Cutout 全清（双端）** — `CutoutZeroHook`（system_server 源头清零 4 层）+ `CutoutAlwaysHook`（全进程非 null 空 cutout 构造 → 全局全屏，含相机防御）
+- **强制全屏** — `AppFullscreen`（禁用 MIUI flip size-compat letterbox）
 
-**设备身份**
-- 伪装设备类型 — hook 7 组检测路径：`MiuiMultiDisplayTypeInfo`、`miui.os.Build`、`miuix.os.Build`（含 `IS_FOLD_INSIDE/OUTSIDE` 静态字段清除）、`DeviceUtils`、`DeviceHelper`、`MiuiConfigs`、防御性静态字段清除。排除 SystemUI 和 Sogou
-- 伪装屏幕类型 — `Configuration.getScreenType() → 0`（EXPAND），让所有进程认为自己在主屏运行
-
-**应用管理**
-- 去除外屏应用启动限制
-- 系统应用白名单
-- 折叠续接控制 — 保持应用在折叠/展开时继续运行
+**应用**
+- `AppWhitelist` — 外屏应用启动白名单（allowstart）
 
 **输入法**
-- 横屏键盘启用 + 禁旋转提示
-- 解除输入法锁定 — 阻止外屏强制切 Sogou
-- Sogou 工具栏 + 剪贴板修复（DexKit）
+- `InputMethodHook` — 外屏 IME 自由（`shouldShowCurrentInput→true`、旋转 toast 抑制）
+- `SogouInputHook` — 输入法布局修复
+
+**AOD（外屏息屏显示）**
+- `AodHook` — 外屏 AOD 显示**内屏多样式时钟**（`MiuiFullAodManager.fullAodEnable→false` 根治"锁屏时钟+黑" + `isFlipped→false` 切断 FlipLinkage 萌宠/简单时钟）；亮屏（`setDozeScreenState {1,3,4}→2`，flip1 实测 4 不亮 2 亮）；`DozeLifecycleOwner.initState` 崩溃防崩（`MiuiDozeService.onCreate` 补装，修 SystemUI 崩溃环）
 
 **SystemUI**
-- 手电筒翻转提示绕过
-- 控制中心紧凑模式修复 — 恢复 QS tile 编辑功能
-- 全局 `isTinyScreen→false` — 修复 modal 菜单、图标截断、运营商文本、控制中心布局
-- 通知图标数量扩展 — 防御性兜底
+- `FlashlightHook` — 手电筒翻转提示绕过 + 直接 toggle
+- `ControlCenterHook` — flip 控制中心 COMPACT 编辑按钮（移植 MixFlipMod，unlock2 重写）
+- `NotifMenuFixHook` — 外屏通知菜单普通手机样式
 
 **fliphome**
-- 小部件覆盖层移除
-- 最近任务缓存刷新
-
-**AOD**
-- 折叠状态下外屏 Always-On Display 启用
-
-**手势**
-- 外屏双击休眠
+- `WidgetRemove` — 外屏桌面小部件移除
+- `RecentsCacheFix` — 最近任务缓存刷新
+- `WidgetTouchPassthrough` — 小部件触摸透传
 
 ### Hook 架构
 
 ```
 onSystemServerStarting (system_server):
-├── AppRestriction          ← 去除外屏应用限制
-├── AppWhitelist            ← 系统应用白名单
-├── CutoutRemove            ← 去挖孔 (Parser.parse + camera 防御)
-├── AppFullscreen (#1-#4)   ← 全屏兼容 (system_server 端)
-├── AppContinuity           ← 折叠续接控制
-├── InputMethodHook         ← IME 旋转/选择解锁
-├── SubScreenGesture        ← 外屏双击休眠
-└── DisplayState            ← 强制 state=6 双屏
+├── CutoutZeroHook         ← cutout 源头清零（4 层, refMD DisplayCutout §16-18）
+├── AppFullscreen          ← size-compat letterbox 禁用
+├── AppWhitelist           ← 外屏 app 白名单
+├── InputMethodHook        ← IME 自由
+└── AodHook.hookFramework  ← AOD framework 侧（flip1; 内部 hook 已精简, 保留入口）
 
 onPackageReady:
-├── AppFullscreen.hookApp (#5-#6) ← app 端 size-compat 关闭 (排除 SystemUI, Sogou)
-├── DeviceIdentityHook [*]        ← 设备身份伪造 (7 hook 组, 排除 SystemUI, Sogou)
-├── ScreenTypeHook [*]            ← Configuration.getScreenType → 0 (EXPAND)
-├── WidgetRemove [fliphome]       ← 小部件覆盖移除
-├── RecentsCacheFix [fliphome]    ← 最近任务缓存刷新
-├── AodHook [aod]                 ← 外屏 AOD 启用
-├── FlashlightHook [systemui]     ← 手电筒翻转提示绕过
-├── ControlCenterHook [systemui]  ← 控制中心紧凑模式修复
-├── StatusBarHook [systemui]      ← isTinyScreen→false + 沉浸式背景 + 图标数量扩展
-└── SogouInputHook [sogou]        ← 搜狗 toolbar + 剪贴板修复 (DexKit)
+├── CutoutAlwaysHook [*]         ← 全进程非 null 空 cutout → 全局全屏（相机防御）
+├── AodHook [systemui/aod]       ← 外屏 AOD 多样式 + 亮屏 + initState 崩溃防崩
+├── FlashlightHook [systemui]    ← 手电筒直开
+├── ControlCenterHook [systemui] ← 控制中心 COMPACT 编辑按钮
+├── NotifMenuFixHook [systemui]  ← 通知菜单普通样式
+├── SogouInputHook [sogou]       ← 输入法修复
+├── WidgetRemove [fliphome]      ← 小部件移除
+├── RecentsCacheFix [fliphome]   ← 最近任务缓存
+└── WidgetTouchPassthrough [fliphome] ← 小部件触摸透传
 ```
 
 ### 功能开关
 
-所有功能可通过 `setprop` 单独关闭，重启生效。无 UI。
+所有功能可通过 `setprop` 单独关闭（重启生效，无 UI）：
 
 ```bash
-# 查看当前设置
-getprop | grep persist.flipunlock
-
-# 关闭某个功能（示例）
-setprop persist.flipunlock.display.cutout false
-reboot
+getprop | grep persist.flipunlock          # 查看
+setprop persist.flipunlock.display.aod false && reboot   # 示例
 ```
 
 | 属性 | 默认 | 控制 |
 |------|------|------|
 | `persist.flipunlock.enable` | true | **总开关** |
-| `persist.flipunlock.display.dual` | true | 双屏显示 (DisplayState) |
-| `persist.flipunlock.display.aod` | true | 外屏 AOD |
-| `persist.flipunlock.display.cutout` | true | 去除挖孔 |
+| `persist.flipunlock.display.aod` | true | 外屏 AOD (AodHook) |
+| `persist.flipunlock.display.cutout` | true | Cutout 全清 (CutoutZeroHook + CutoutAlwaysHook) |
 | `persist.flipunlock.display.fullscreen` | true | 强制全屏 (AppFullscreen) |
-| `persist.flipunlock.app.continuity` | true | 折叠续接 |
-| `persist.flipunlock.ime` | true | 输入法自由切换 |
-| `persist.flipunlock.ui.widget` | true | 小部件覆盖移除 |
-| `persist.flipunlock.ui.controlcenter` | true | 控制中心修复 |
+| `persist.flipunlock.app.whitelist` | true | 应用白名单 (AppWhitelist) |
+| `persist.flipunlock.ime` | true | 输入法自由 (InputMethodHook + SogouInputHook) |
+| `persist.flipunlock.systemui.flashlight` | true | 手电筒 (FlashlightHook) |
+| `persist.flipunlock.ui.controlcenter` | true | 控制中心 (ControlCenterHook) |
+| `persist.flipunlock.ui.notifmenu` | true | 通知菜单 (NotifMenuFixHook) |
+| `persist.flipunlock.ui.widget` | true | 小部件移除 (WidgetRemove + WidgetTouchPassthrough) |
+| `persist.flipunlock.ui.recentsmenu` | true | 最近任务缓存 (RecentsCacheFix) |
 
 ### LSP 作用域
 
 system, systemui, aod, camera, fliphome, sogou, miuihome, gallery
 
-### 要求
+### 要求 / 构建
 
-- LSPosed（libxposed API 101+）
-- Xiaomi MIX Flip
-- HyperOS
+- LSPosed（libxposed API 101+）、Xiaomi MIX Flip、HyperOS
+- `./gradlew :app:assembleDebug`；CI：push `main` 自动构建
 
-### 构建
+### 致谢 / License
 
-```bash
-./gradlew :app:assembleDebug
-```
-
-CI 自动构建：push 到 `master` 分支即触发。
-
-### 致谢
-
-- [MixFlipMod](https://github.com/parallelcc/MixFlipMod) by Parallelc — LSPosed 架构、SogouHook、DexKit 参考
-- `refMD/cleaned/` — MIUI 框架反编译分析文档
-
-### License
-
-AGPL-3.0
+- [MixFlipMod](https://github.com/parallelcc/MixFlipMod) — ControlCenter/NotifMenu 移植参考
+- `refMD/cleaned/` — MIUI 反编译分析（`AOD_Full_Chain.md` = AOD 全貌权威文档）
+- AGPL-3.0

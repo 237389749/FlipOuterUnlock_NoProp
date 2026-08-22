@@ -49,11 +49,11 @@ class Main : XposedModule() {
     // 每个条目=一个完整功能; dispatch 按 targetPackages 匹配
     // ("*" = 通配, 只首次触发取 framework classloader)。
     private val packageHooks = listOf<BaseHook>(
-        CutoutAlwaysHook,           // cutout: 全进程空 cutout 构造 → 全局全屏(双机型; camera 排除保真实 cutout)
+        CutoutAlwaysHook,           // cutout: 全进程空 cutout 构造 → 全局全屏(双机型; 相机走 #2 非 null cutout 防御, 不闪退)
         FlashlightHook,             // systemui: 手电筒(跳弹窗 + setFlipListening 直接 toggle)
         ControlCenterHook,          // systemui: flip 控制中心 COMPACT 编辑按钮 + device center 尺寸(移植 MixFlipMod, unlock2 重写)
         NotifMenuFixHook,           // systemui: 外屏通知菜单按普通手机样式(移植 MixFlipMod hookNotification, 补全逻辑链)
-        AodHook,                    // systemui: flip1 AOD 外屏显示(属性4版, 已去 #5 getCutout→NONE)
+        AodHook,                    // systemui: flip1 AOD 外屏显示(属性4版: fullAodEnable→false 多样式 + initState 崩溃防崩)
         SogouInputHook,             // ime: 输入法键盘高度/布局修复
         WidgetRemove,               // fliphome: 外屏桌面小部件移除
         RecentsCacheFix,            // fliphome: 最近任务缓存

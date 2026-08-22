@@ -8,14 +8,12 @@ import android.view.WindowManager
 /**
  * Inner/outer screen identification via resolution + density.
  *
- * MIX Flip screen specs:
- *   Outer (cover):  1208 x 1392, density ~3.5 (560dpi)
- *   Inner (main):   1555 x 2508, density ~3.5 (560dpi)
+ * MIX Flip 1 (ruyi) 实测规格(2026-08-20 设备 dumpsys):
+ *   Outer (cover):  1208 x 1392 @520dpi (display0, 默认 display)
+ *   Inner (main):   1080 x 2340 @520dpi (display1)
+ *   (flip2 bixi 内屏 1224x2912, 外屏同 1208x1392)
  *
- * NOTE: This is a utility class available for future use.
- * Hook files should NOT depend on it during early testing —
- * each hook uses its own minimal inline check until the
- * screen identification logic stabilizes.
+ * NOTE: 当前无 hook 引用本工具(各 hook 用内联判断); 保留供未来统一屏幕识别。
  */
 object ScreenUtils {
 

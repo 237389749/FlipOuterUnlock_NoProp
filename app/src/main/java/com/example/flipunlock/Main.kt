@@ -31,11 +31,11 @@ internal var module: Main? = null
  * 只保留属性 4 下真实有用的修复。
  *
  * 组织: 一文件一功能, 按目标应用目录聚合(工作准则 §5/§6):
- *   system_server/   system_server 进程(拓扑/全屏/壁纸/白名单/输入法/AOD框架侧)
- *   systemui/        com.android.systemui 进程(AOD/手电筒/磁贴/通知)
- *   fliphome/        com.miui.fliphome(外屏桌面小部件/最近任务)
+ *   system_server/   system_server 进程(拓扑/全屏/白名单/输入法/AOD框架侧)
+ *   systemui/        com.android.systemui 进程(AOD/手电筒/控制中心/通知菜单)
+ *   fliphome/        com.miui.fliphome(外屏桌面小部件/最近任务/触摸透传)
  *   ime/             com.sohu.inputmethod.sogou.xiaomi(输入法)
- *   cutout/          全进程 cutout 构造(双机型全屏, 排除 camera 保真实 cutout)
+ *   cutout/          全进程 cutout 构造(双机型全屏, 相机走非 null cutout 防御)
  *
  * 排除(2026-08-17 定稿): 身份伪装系(DeviceIdentity/ScreenType/TinyScreenFix/
  *   Flip1AodIdentity/CameraReverse)、CameraFixHook(属性4无用)、SFDeviceGestureHook

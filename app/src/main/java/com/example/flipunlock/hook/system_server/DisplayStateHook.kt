@@ -6,6 +6,12 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
 /**
  * DeviceState 布局按状态分支（2026-08-14 终版）: 除全展开(state 3)外, 外屏都亮。
  *
+ * ⚠️ DISABLED (2026-08-19, Main 未注册): 属性 4 原生 display 布局已正确
+ *   (折叠外屏/展开内屏)。hook DeviceStateToLayoutMap.get 强制 state0 →
+ *   applyLayoutLocked NPE(LogicalDisplay null, android.display 崩, LSP 安全模式)
+ *   —— 双机型属性 4 均不需要。文件保留(§8 注释不删除), 开关
+ *   persist.flipunlock.display.state 保留供未来回退实验。
+ *
  * 用户实测演进:
  *   初版(恒 state 6 双屏外屏主导, d284c51/c431035) → 双屏同显实现, 但"以外屏为主屏"体验不适合。
  *   终版: DeviceStateToLayoutMap.get(state) 按 state 分支:
@@ -16,8 +22,7 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  * getCurrentState 注释(不 hook): 状态保持真实(sensor 驱动), 手电筒等折叠判定
  *   消费点由 FlashlightHook 方法级拦截处理; 避免"系统认为双屏"的副作用。
  *
- * 开关: persist.flipunlock.display.state(默认 true)。
- * 进程: system_server。
+ * 开关: persist.flipunlock.display.state(默认 true)。进程: system_server。
  */
 object DisplayStateHook {
 

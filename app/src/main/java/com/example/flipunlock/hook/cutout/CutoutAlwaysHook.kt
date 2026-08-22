@@ -25,6 +25,11 @@ import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
  * #4 WindowLayoutStubImpl.getLayoutInDisplayCutoutMode → 3(ALWAYS)
  *    —— WindowLayout.computeFrames L94 跳过裁剪（双保险）
  *
+ * 相机处理(2026-08-19 修正, 596d2e3): 相机**不排除**, 统一走 #2 非 null 空 cutout ——
+ *   system_server CutoutZero 清了源头后相机 getCutout() 若 null →
+ *   CamLayoutManagerImpl 读 getBoundingRectRight() null → rect.right NPE 闪退
+ *   (90833c4 注释实锤 "Camera is protected by hookDisplayGetCutout")。
+ *
  * 影响：所有作用域 app 的窗口不避让挖孔（全局全屏），与 flip1 CutoutRemove 语义一致。
  */
 object CutoutAlwaysHook : BaseHook() {

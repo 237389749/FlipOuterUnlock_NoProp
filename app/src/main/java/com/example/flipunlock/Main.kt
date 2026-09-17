@@ -7,6 +7,7 @@ import com.example.flipunlock.hook.fliphome.WidgetRemove
 import com.example.flipunlock.hook.fliphome.WidgetTouchPassthrough
 import com.example.flipunlock.hook.ime.SogouInputHook
 import com.example.flipunlock.hook.system_server.AppFullscreen
+import com.example.flipunlock.hook.system_server.AppInterceptCacheFix
 import com.example.flipunlock.hook.system_server.AppWhitelist
 import com.example.flipunlock.hook.system_server.CutoutZeroHook
 import com.example.flipunlock.hook.system_server.InputMethodHook
@@ -73,6 +74,7 @@ class Main : XposedModule() {
         CutoutZeroHook.hook(param)     // system_server 端 cutout 源头清零(calculateDisplayCutoutForRotation→NO_CUTOUT, refMD §17)
         AppFullscreen.hook(param)      // size-compat 禁用(全屏)
         AppWhitelist.hook(param)       // 外屏 app 白名单(全部 app setForceDisplayCompatMode allowstart)
+        AppInterceptCacheFix.hook(param) // 拦截判定缓存修复: hasActivityInterceptionKey→false(被拦过缓存 true 导致放行无效, 2026-09-18 国际版)
         InputMethodHook.hook(param)    // IME 外屏自由(shouldShowCurrentInput→true / 转屏 toast 抑制)
         AodHook.hookFramework(param)   // AOD framework 侧(flip1; flip2 内部 SKIP)
     }

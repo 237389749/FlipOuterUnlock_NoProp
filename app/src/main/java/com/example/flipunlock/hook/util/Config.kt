@@ -29,6 +29,7 @@ object Config {
         "persist.flipunlock.display.cutout",
         "persist.flipunlock.display.fullscreen",
         "persist.flipunlock.app.whitelist",
+        "persist.flipunlock.app.intercept",
         "persist.flipunlock.ime",
         "persist.flipunlock.systemui.flashlight",
         "persist.flipunlock.ui.controlcenter",
@@ -51,6 +52,9 @@ object Config {
 
     // App
     val appWhitelist: Boolean get() = enabled && raw("persist.flipunlock.app.whitelist", true)
+    // 拦截判定缓存修复(2026-09-18, 国际版): AppCompatTask.hasActivityInterceptionKey → false
+    //   根因: ACTIVITY_INTERCEPTION_MAP 是 static, 被拦过一次后缓存 true → 放行命令/模块 enroll 永远无效
+    val appInterceptCache: Boolean get() = enabled && raw("persist.flipunlock.app.intercept", true)
 
     // IME
     val ime: Boolean get() = enabled && raw("persist.flipunlock.ime", true)

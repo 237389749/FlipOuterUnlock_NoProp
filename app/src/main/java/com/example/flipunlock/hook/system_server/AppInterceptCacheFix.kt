@@ -27,7 +27,7 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  *     → 其第 1 步读 LOCAL_POLICY_BY_COMMAND[pkg]=="allowstart"（AppWhitelist 已 enroll）→ false 放行
  *   （② 判定层兜底为可选双保险；类不在 BOOTCLASSPATH，失败不影响 ①）
  *
- * 依赖：AppWhitelist（提供 allowstart enroll）；开关 persist.flipunlock.app.intercept（默认 true）
+ * 依赖：AppWhitelist（提供 allowstart enroll）；开关：无(2026-09-19 精简 —— 常开, 仅受 persist.flipunlock.enable 控制)
  * 进程：system_server
  */
 object AppInterceptCacheFix {
@@ -36,8 +36,9 @@ object AppInterceptCacheFix {
     private const val INTERCEPT_CTRL = "com.android.server.wm.InterceptActivityController"
 
     fun hook(param: SystemServerStartingParam) {
-        if (!Config.appInterceptCache) {
-            log("AppInterceptCacheFix: DISABLED by persist.flipunlock.app.intercept")
+        // 开关精简(2026-09-19): 纯优化项不再单独设开关, 只受总开关控制
+        if (!Config.enabled) {
+            log("AppInterceptCacheFix: DISABLED by persist.flipunlock.enable")
             return
         }
         log("AppInterceptCacheFix: setting up")

@@ -9,8 +9,9 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  * ⚠️ DISABLED (2026-08-19, Main 未注册): 属性 4 原生 display 布局已正确
  *   (折叠外屏/展开内屏)。hook DeviceStateToLayoutMap.get 强制 state0 →
  *   applyLayoutLocked NPE(LogicalDisplay null, android.display 崩, LSP 安全模式)
- *   —— 双机型属性 4 均不需要。文件保留(§8 注释不删除), 开关
- *   persist.flipunlock.display.state 保留供未来回退实验。
+ *   —— 双机型属性 4 均不需要。文件保留(§8 注释不删除);
+ *   [2026-09-19 开关精简] 单独开关 persist.flipunlock.display.state 已移除(本 hook 未注册, 开关无意义),
+ *   要回退实验直接在 Main.onSystemServerStarting 取消 AodHook 下方的注释即可。
  *
  * 用户实测演进:
  *   初版(恒 state 6 双屏外屏主导, d284c51/c431035) → 双屏同显实现, 但"以外屏为主屏"体验不适合。
@@ -22,15 +23,13 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  * getCurrentState 注释(不 hook): 状态保持真实(sensor 驱动), 手电筒等折叠判定
  *   消费点由 FlashlightHook 方法级拦截处理; 避免"系统认为双屏"的副作用。
  *
- * 开关: persist.flipunlock.display.state(默认 true)。进程: system_server。
+ * 开关: 无(2026-09-19 移除; Main 未注册)。进程: system_server。
  */
 object DisplayStateHook {
 
     fun hook(param: SystemServerStartingParam) {
-        if (!Config.displayState) {
-            log("DisplayStateHook: DISABLED by persist.flipunlock.display.state")
-            return
-        }
+        // 开关精简(2026-09-19): 本 hook 已不在 Main 注册(属性 4 原生布局已正确), 单独开关一并移除;
+        //   文件与实验配置保留(§8 注释不删除), 需要回退实验时在 Main.onSystemServerStarting 取消注释即可。
         log("DisplayStateHook: setting up (除全展开外屏亮)")
         safeHook("DisplayStateHook") {
             // ── DeviceStateToLayoutMap.get(state) → state 3 原生, 其他恒外屏(state 0 布局) ──

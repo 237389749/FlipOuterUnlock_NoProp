@@ -51,8 +51,9 @@ object AppWhitelist {
     private const val POLL_INTERVAL_MS = 2_000L
 
     fun hook(param: SystemServerStartingParam) {
-        if (!Config.appWhitelist) {
-            log("AppWhitelist: DISABLED by persist.flipunlock.app.whitelist")
+        // 开关精简(2026-09-19): 纯优化项不再单独设开关, 只受总开关控制
+        if (!Config.enabled) {
+            log("AppWhitelist: DISABLED by persist.flipunlock.enable")
             return
         }
         log("AppWhitelist: armed (deferred until boot completes)")

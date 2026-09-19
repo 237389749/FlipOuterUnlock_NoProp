@@ -49,8 +49,9 @@ object WidgetRemove : BaseHook() {
     private const val ACTION_REMOVE_WINDOW = 2
 
     override fun setupHooks(param: PackageReadyParam) {
-        if (!Config.uiWidget) {
-            log("WidgetRemove: DISABLED by persist.flipunlock.ui.widget")
+        // 开关精简(2026-09-19): 纯优化项不再单独设开关, 只受总开关控制
+        if (!Config.enabled) {
+            log("WidgetRemove: DISABLED by persist.flipunlock.enable")
             return
         }
         runCatching {

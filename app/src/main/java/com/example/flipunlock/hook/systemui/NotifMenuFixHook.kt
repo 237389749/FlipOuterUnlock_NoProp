@@ -20,7 +20,7 @@ import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
  *   不影响其他读 isTinyScreen 的路径), 非全局改值。
  *
  * 进程: com.android.systemui（LSPosed 2.0.1 该进程以 pkg=android 回调, 需进程守卫）。
- * 开关: persist.flipunlock.ui.notifmenu（默认 true）。
+ * 开关: 无(2026-09-19 开关精简 —— 优化项常开, 仅受 persist.flipunlock.enable 总开关控制)。
  */
 object NotifMenuFixHook : BaseHook() {
 
@@ -30,7 +30,8 @@ object NotifMenuFixHook : BaseHook() {
     private var inCreateMenu = false
 
     override fun setupHooks(param: PackageReadyParam) {
-        if (!Config.uiNotifMenu) return
+        // 开关精简(2026-09-19): 纯优化项不再单独设开关, 只受总开关控制
+        if (!Config.enabled) return
         // 进程守卫: pkg=android 时确认在 systemui 进程(同 ControlCenterHook)
         if (param.packageName == "android") {
             val proc = currentProcessName()

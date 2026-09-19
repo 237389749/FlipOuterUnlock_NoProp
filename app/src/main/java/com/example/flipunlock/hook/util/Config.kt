@@ -3,6 +3,12 @@ package com.example.flipunlock.hook.util
 /**
  * Feature toggles via SystemProperties. All default to true (enabled).
  *
+ * ★2026-09-19 开关精简: 只保留「改动会翻转可见行为、出问题需要一键回退」的开关 + 总开关。
+ *   纯优化项不再单独设开关, 改为**常开、仅受总开关 `enable` 控制**:
+ *     app.whitelist / app.intercept / ime / systemui.flashlight /
+ *     ui.controlcenter / ui.notifmenu / ui.widget / ui.recentsmenu
+ *   已弃用并移除: display.state(DisplayStateHook 未注册, 文件保留供回退实验)。
+ *
  * List all keys and current values:
  *   getprop | grep persist.flipunlock
  *
@@ -11,16 +17,10 @@ package com.example.flipunlock.hook.util
  *   setprop persist.flipunlock.display.aod false          # outer-screen AOD (AodHook)
  *   setprop persist.flipunlock.display.cutout false       # cutout 全清 (CutoutZeroHook + CutoutAlwaysHook)
  *   setprop persist.flipunlock.display.fullscreen false   # force fullscreen (AppFullscreen)
- *   setprop persist.flipunlock.app.whitelist false        # app whitelist (AppWhitelist)
- *   setprop persist.flipunlock.ime false                  # IME freedom (InputMethodHook + SogouInputHook)
- *   setprop persist.flipunlock.systemui.flashlight false  # flashlight (FlashlightHook)
- *   setprop persist.flipunlock.ui.controlcenter false     # control center (ControlCenterHook)
- *   setprop persist.flipunlock.ui.notifmenu false         # notification menu (NotifMenuFixHook)
- *   setprop persist.flipunlock.ui.widget false            # widget overlay removal (WidgetRemove + WidgetTouchPassthrough)
- *   setprop persist.flipunlock.ui.recentsmenu false       # recents cache (RecentsCacheFix)
+ * 恢复默认: setprop <key> ""   (空值 = 默认 true)
  *
  * 注(2026-08-21): NoProp 为属性 4(flip 原生)版本 —— 无身份伪装/旋转/音量/壁纸/续接
- *   hook(旧项目属性 1 方案已排除)。下表 keys 仅列当前实际注册的 hook 开关。
+ *   hook(旧项目属性 1 方案已排除)。
  */
 object Config {
     private val keys = listOf(
@@ -28,45 +28,15 @@ object Config {
         "persist.flipunlock.display.aod",
         "persist.flipunlock.display.cutout",
         "persist.flipunlock.display.fullscreen",
-        "persist.flipunlock.app.whitelist",
-        "persist.flipunlock.app.intercept",
-        "persist.flipunlock.ime",
-        "persist.flipunlock.systemui.flashlight",
-        "persist.flipunlock.ui.controlcenter",
-        "persist.flipunlock.ui.notifmenu",
-        "persist.flipunlock.ui.widget",
-        "persist.flipunlock.ui.recentsmenu",
-        "persist.flipunlock.display.state",
     )
 
-    // Master switch
+    // Master switch —— 所有 hook(含常开的优化项)统一受它控制
     val enabled: Boolean get() = raw("persist.flipunlock.enable", true)
 
-    // Display
+    // Display —— 保留开关: 这三项直接改变可见行为(挖孔/全屏/外屏 AOD), 需要能单独回退
     val displayAod: Boolean get() = enabled && raw("persist.flipunlock.display.aod", true)
     val displayCutout: Boolean get() = enabled && raw("persist.flipunlock.display.cutout", true)
     val displayFullscreen: Boolean get() = enabled && raw("persist.flipunlock.display.fullscreen", true)
-    // DisplayStateHook(DeviceState 布局按 state 分支) — 2026-08-19 已注释禁用(Main 未注册),
-    //   属性 4 原生 display 布局已正确; 开关保留供未来回退实验。
-    val displayState: Boolean get() = enabled && raw("persist.flipunlock.display.state", true)
-
-    // App
-    val appWhitelist: Boolean get() = enabled && raw("persist.flipunlock.app.whitelist", true)
-    // 拦截判定缓存修复(2026-09-18, 国际版): AppCompatTask.hasActivityInterceptionKey → false
-    //   根因: ACTIVITY_INTERCEPTION_MAP 是 static, 被拦过一次后缓存 true → 放行命令/模块 enroll 永远无效
-    val appInterceptCache: Boolean get() = enabled && raw("persist.flipunlock.app.intercept", true)
-
-    // IME
-    val ime: Boolean get() = enabled && raw("persist.flipunlock.ime", true)
-
-    // SystemUI
-    val flashlight: Boolean get() = enabled && raw("persist.flipunlock.systemui.flashlight", true)
-    val uiControlCenter: Boolean get() = enabled && raw("persist.flipunlock.ui.controlcenter", true)
-    val uiNotifMenu: Boolean get() = enabled && raw("persist.flipunlock.ui.notifmenu", true)
-
-    // fliphome
-    val uiWidget: Boolean get() = enabled && raw("persist.flipunlock.ui.widget", true)
-    val uiRecentsMenu: Boolean get() = enabled && raw("persist.flipunlock.ui.recentsmenu", true)
 
     /** Print all toggle keys and values. */
     fun logConfig() {
@@ -74,6 +44,7 @@ object Config {
         for (key in keys) {
             sb.append("  $key = ${readProp(key)}\n")
         }
+        sb.append("  (未列出的优化项常开; 全部受 persist.flipunlock.enable 控制)\n")
         sb.append("  (getprop | grep persist.flipunlock)")
         log(sb.toString())
     }

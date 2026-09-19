@@ -63,26 +63,25 @@ onPackageReady:
 
 ### Feature Toggles
 
-All features individually disableable via `setprop`（reboot 后生效, 无 UI）:
+开关已精简（2026-09-19）：只保留「改动会翻转可见行为、需要能单独回退」的 4 个 + 总开关；
+纯优化项（白名单 / 拦截缓存 / IME / 手电筒 / 控制中心 / 通知菜单 / 小部件 / 最近任务）
+**常开、仅受 `enable` 控制**，不再单独设 property（`reboot` 后生效, 无 UI）:
 
 ```bash
 getprop | grep persist.flipunlock          # list
 setprop persist.flipunlock.display.aod false && reboot   # example
+setprop persist.flipunlock.display.aod ""                # 恢复默认(true)
 ```
 
 | Property | Default | Controls |
 |----------|---------|----------|
-| `persist.flipunlock.enable` | true | **Master switch** |
+| `persist.flipunlock.enable` | true | **Master switch**（关掉 = 全部 hook 停用，含常开优化项）|
 | `persist.flipunlock.display.aod` | true | Outer-screen AOD (AodHook) |
 | `persist.flipunlock.display.cutout` | true | Cutout 全清 (CutoutZeroHook + CutoutAlwaysHook) |
 | `persist.flipunlock.display.fullscreen` | true | Force fullscreen (AppFullscreen) |
-| `persist.flipunlock.app.whitelist` | true | App whitelist (AppWhitelist) |
-| `persist.flipunlock.ime` | true | IME freedom (InputMethodHook + SogouInputHook) |
-| `persist.flipunlock.systemui.flashlight` | true | Flashlight (FlashlightHook) |
-| `persist.flipunlock.ui.controlcenter` | true | Control center (ControlCenterHook) |
-| `persist.flipunlock.ui.notifmenu` | true | Notification menu (NotifMenuFixHook) |
-| `persist.flipunlock.ui.widget` | true | Widget overlay removal (WidgetRemove + WidgetTouchPassthrough) |
-| `persist.flipunlock.ui.recentsmenu` | true | Recents cache (RecentsCacheFix) |
+
+常开（无独立 property）: AppWhitelist / AppInterceptCacheFix / InputMethodHook + SogouInputHook /
+FlashlightHook / ControlCenterHook / NotifMenuFixHook / WidgetRemove + WidgetTouchPassthrough / RecentsCacheFix。
 
 ### LSP Scope
 
@@ -154,26 +153,26 @@ onPackageReady:
 
 ### 功能开关
 
-所有功能可通过 `setprop` 单独关闭（重启生效，无 UI）：
+开关已精简（2026-09-19）：只保留「改动会翻转可见行为、需要能单独回退」的 4 个 + 总开关；
+纯优化项（白名单 / 拦截缓存 / IME / 手电筒 / 控制中心 / 通知菜单 / 小部件 / 最近任务）
+**常开、仅受 `enable` 控制**，不再单独设 property（重启生效，无 UI）：
 
 ```bash
 getprop | grep persist.flipunlock          # 查看
 setprop persist.flipunlock.display.aod false && reboot   # 示例
+setprop persist.flipunlock.display.aod ""                # 恢复默认(true)
 ```
 
 | 属性 | 默认 | 控制 |
 |------|------|------|
-| `persist.flipunlock.enable` | true | **总开关** |
+| `persist.flipunlock.enable` | true | **总开关**（关掉 = 全部 hook 停用，含常开优化项）|
 | `persist.flipunlock.display.aod` | true | 外屏 AOD (AodHook) |
 | `persist.flipunlock.display.cutout` | true | Cutout 全清 (CutoutZeroHook + CutoutAlwaysHook) |
 | `persist.flipunlock.display.fullscreen` | true | 强制全屏 (AppFullscreen) |
-| `persist.flipunlock.app.whitelist` | true | 应用白名单 (AppWhitelist) |
-| `persist.flipunlock.ime` | true | 输入法自由 (InputMethodHook + SogouInputHook) |
-| `persist.flipunlock.systemui.flashlight` | true | 手电筒 (FlashlightHook) |
-| `persist.flipunlock.ui.controlcenter` | true | 控制中心 (ControlCenterHook) |
-| `persist.flipunlock.ui.notifmenu` | true | 通知菜单 (NotifMenuFixHook) |
-| `persist.flipunlock.ui.widget` | true | 小部件移除 (WidgetRemove + WidgetTouchPassthrough) |
-| `persist.flipunlock.ui.recentsmenu` | true | 最近任务缓存 (RecentsCacheFix) |
+
+常开（无独立 property）：AppWhitelist / AppInterceptCacheFix / InputMethodHook + SogouInputHook /
+FlashlightHook / ControlCenterHook / NotifMenuFixHook / WidgetRemove + WidgetTouchPassthrough /
+RecentsCacheFix。
 
 ### LSP 作用域
 

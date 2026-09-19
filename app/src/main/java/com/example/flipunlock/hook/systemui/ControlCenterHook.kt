@@ -42,8 +42,9 @@ object ControlCenterHook : BaseHook() {
     )
 
     override fun setupHooks(param: PackageReadyParam) {
-        if (!Config.uiControlCenter) {
-            log("ControlCenterHook: DISABLED by persist.flipunlock.ui.controlcenter")
+        // 开关精简(2026-09-19): 纯优化项不再单独设开关, 只受总开关控制
+        if (!Config.enabled) {
+            log("ControlCenterHook: DISABLED by persist.flipunlock.enable")
             return
         }
         // Process guard: only install in SystemUI

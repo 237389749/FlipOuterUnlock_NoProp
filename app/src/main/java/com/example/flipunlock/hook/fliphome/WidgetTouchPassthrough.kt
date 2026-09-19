@@ -59,8 +59,9 @@ object WidgetTouchPassthrough : BaseHook() {
     }
 
     override fun setupHooks(param: PackageReadyParam) {
-        if (!Config.uiWidget) {
-            log("WidgetTouchPassthrough: DISABLED by persist.flipunlock.ui.widget")
+        // 开关精简(2026-09-19): 纯优化项不再单独设开关, 只受总开关控制
+        if (!Config.enabled) {
+            log("WidgetTouchPassthrough: DISABLED by persist.flipunlock.enable")
             return
         }
         val clazz = findGroupViewClass(param.classLoader) ?: run {

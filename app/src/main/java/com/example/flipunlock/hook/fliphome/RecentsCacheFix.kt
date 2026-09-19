@@ -34,8 +34,9 @@ object RecentsCacheFix : BaseHook() {
     override val targetPackages = listOf("com.miui.fliphome")
 
     override fun setupHooks(param: PackageReadyParam) {
-        if (!Config.uiRecentsMenu) {
-            log("RecentsCacheFix: DISABLED by persist.flipunlock.ui.recentsmenu")
+        // 开关精简(2026-09-19): 纯优化项不再单独设开关, 只受总开关控制
+        if (!Config.enabled) {
+            log("RecentsCacheFix: DISABLED by persist.flipunlock.enable")
             return
         }
         // Fix #1: cache staleness — force fresh task load every time

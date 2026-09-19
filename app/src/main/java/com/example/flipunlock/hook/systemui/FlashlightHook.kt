@@ -29,8 +29,9 @@ object FlashlightHook : BaseHook() {
     override val targetPackages = listOf("android", "com.android.systemui")
 
     override fun setupHooks(param: PackageReadyParam) {
-        if (!Config.flashlight) {
-            log("FlashlightHook: DISABLED by persist.flipunlock.systemui.flashlight")
+        // 开关精简(2026-09-19): 纯优化项不再单独设开关, 只受总开关控制
+        if (!Config.enabled) {
+            log("FlashlightHook: DISABLED by persist.flipunlock.enable")
             return
         }
         if (param.packageName == "android") {

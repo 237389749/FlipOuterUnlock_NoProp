@@ -42,6 +42,21 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  *      MiuiFullAodManager / com.android.keyguard.doze.MiuiDozeService / com.miui.aod.* 若改名
  *      → hook 装不上(只打失败日志, 不崩), 以装机日志为准。
  *
+ * ★2026-09-19 装机实测修正(第一轮修复无效的根因, 日志实证):
+ *   第一版 installFlipLinkageDefense 只靠 processClassLoader + allClassLoaders() 找 MIUIAod
+ *   plugin CL → systemui 进程里得到 `installFlipLinkageDefense 完成 (candidates=1, hooked=0)`。
+ *   AOD 渲染在 **SystemUI 进程**(实测 pid 6013), 而 `com.miui.aod.*` 在 MIUIAod.apk 的独立
+ *   PathClassLoader 里, 且 **Android 17/HyperOS4 移除了 `ActivityThread.mAllClassLoaders`**
+ *   (实测 `No field mAllClassLoaders in class android.app.ActivityThread`) → 候选只剩 systemui
+ *   自身 CL → loadClass 全失败 → 样式照旧被 FlipLinkage 替换(用户"还是默认样式")。
+ *   → 新增 pluginClassLoaderFrom(root): 从 MiuiDozeService 实例图 BFS 反查 `com.miui.aod.*`
+ *     对象(其持有 com.miui.aod.doze.DozeServicePluginImpl, 日志 onDreamingStarted 第 2 参实锤)
+ *     取 classLoader; allClassLoaders() 增加 mPackages→LoadedApk#getClassLoader() 兜底;
+ *     runtimeHooksInstalled 由"入口置位"改"装齐后置位"(首次失败可重试);
+ *     installFlipLinkageDefense 在 onCreate after 与 onDreamingStarted after 均传 root 实例。
+ *   实测佐证(flip2): `MiuiDozeService: onDreamingStarted ,needWallpaperAnim: false,
+ *   fullAodEnable: false` → fullAodEnable 原生即 false(对应 hook 幂等无害);
+ *
  * ── 2026-08-21 精简后实际生效的 hook(核心方案) ──
  *   1. hookFullAodEnable: MiuiFullAodManager.fullAodEnable()→false (systemui 主 CL)
  *      —— 根治"外屏 AOD=锁屏时钟+黑"(full_screen_aod_on=1 默认 SameToLock → needFullAod
@@ -293,9 +308,9 @@ object AodHook : BaseHook() {
             val m = cls.getDeclaredMethod("onCreate").apply { isAccessible = true }
             hook(m, after { chain, result ->
                 installInitStateDefense(cl)
-                // [2026-09-19] 同上: onCreate 内 setDozeRequester 已触发 plugin 加载 —— 此刻装
-                //   isFlipped→false 必达真实 plugin classloader, 早于第一次 AOD 样式装配。
-                installFlipLinkageDefense(cl)
+                // [2026-09-19] onCreate 内 setDozeRequester 已把 plugin 挂到本实例 —— 用
+                //   chain.thisObject(MiuiDozeService) 反查 plugin classloader, 早于第一次样式装配。
+                installFlipLinkageDefense(cl, chain.thisObject)
                 result
             })
             log("AodHook: ✓ MiuiDozeService.onCreate hooked (initState 防崩 + FlipLinkage 切断补装点)")
@@ -315,23 +330,73 @@ object AodHook : BaseHook() {
         log("AodHook: installInitStateDefense 完成 (candidates=${candidates.size})")
     }
 
-    /** 遍历候选 classloader 补装 FlipLinkageStyleController.isFlipped→false(幂等).
+    /** 补装 FlipLinkageStyleController.isFlipped→false(幂等).
      *
      *  HyperOS4 flip2 核心修复(2026-09-19): 切断 CategoryFactory L138-148 的 FlipLinkage
      *  样式替换, 外屏 AOD 恢复用用户在设置里选的 aod_category_name 样式(与 flip1 同一机制)。
-     *  时机: ① 注入时(setupHooks, plugin 已加载则立即生效) ② MiuiDozeService.onCreate after
-     *  (plugin 必已加载) ③ L2(onDreamingStarted, machineCl 必达) —— 三处幂等补装。 */
-    private fun installFlipLinkageDefense(fallback: ClassLoader) {
-        val candidates = buildList {
-            add(processClassLoader(fallback))
-            addAll(allClassLoaders())
-        }.distinct()
+     *
+     *  ★classloader 获取(2026-09-19 装机实测修正): AOD 渲染在 **SystemUI 进程**, 而
+     *  `com.miui.aod.*` 由 MIUIAod.apk 的独立 PathClassLoader 加载 —— OS4/Android 17 已移除
+     *  `ActivityThread.mAllClassLoaders`（实测 `No field mAllClassLoaders in class
+     *  android.app.ActivityThread`）→ 旧的全量遍历失效, 候选只剩 systemui 自己的 CL
+     *  → loadClass 全失败 → `hooked=0` → 样式照旧被替换(第一轮修复无效的根因)。
+     *  → 改为从 plugin 实例反查: `MiuiDozeService` 持有 `com.miui.aod.doze.DozeServicePluginImpl`
+     *  (日志实锤 onDreamingStarted 第 2 参), 图遍历取出 `com.miui.aod.*` 对象的 classLoader。
+     *
+     *  时机: ① 注入时(setupHooks) ② MiuiDozeService.onCreate after(root=MiuiDozeService 实例;
+     *  onCreate 内 setDozeRequester 已挂 plugin → 早于第一次样式装配) ③ DreamService
+     *  .onDreamingStarted after(补装, 覆盖后续 dream) ④ L2(machineCl 必达) —— 全部幂等。 */
+    private fun installFlipLinkageDefense(fallback: ClassLoader, root: Any? = null) {
+        if (flipLinkageHookedCls.isNotEmpty()) return   // 本进程已装成功, 不再扫
+        val candidates = LinkedHashSet<ClassLoader>()
+        candidates.add(processClassLoader(fallback))
+        candidates.add(fallback)
+        candidates.addAll(allClassLoaders())
+        pluginClassLoaderFrom(root)?.let { candidates.add(it) }
         for (c in candidates) {
             runCatching { c.loadClass("com.miui.aod.flip.FlipLinkageStyleController") }
                 .onSuccess { hookFlipLinkageStyleController(c) }
         }
         log("AodHook: installFlipLinkageDefense 完成 (candidates=${candidates.size}, " +
             "hooked=${flipLinkageHookedCls.size})")
+    }
+
+    /** 从对象图反查 MIUIAod plugin 的 ClassLoader(Android 17 无 mAllClassLoaders 时的替代)。
+     *
+     *  BFS 深度 ≤6, 只沿 `com.miui.aod.*` / `com.android.keyguard.*` 类型的分支深入
+     *  (MiuiDozeService → mDozePlugin(DozeServicePluginImpl) → ...), 遇到 `com.miui.aod.*`
+     *  对象即取其 classLoader(= MIUIAod.apk 的 PathClassLoader)。找不到返回 null。 */
+    private fun pluginClassLoaderFrom(root: Any?): ClassLoader? {
+        if (root == null) return null
+        val visited = mutableSetOf<Int>()
+        val queue = ArrayDeque<Any>()
+        queue.add(root)
+        var level = 1
+        var depth = 0
+        while (queue.isNotEmpty() && depth <= 6) {
+            var next = 0
+            repeat(level) {
+                if (queue.isEmpty()) return@repeat
+                val obj = queue.removeFirst()
+                if (!visited.add(System.identityHashCode(obj))) return@repeat
+                val cls = obj.javaClass
+                if (cls.name.startsWith("com.miui.aod")) return cls.classLoader
+                for (f in cls.declaredFields) {
+                    val v = runCatching {
+                        f.isAccessible = true
+                        f.get(obj)
+                    }.getOrNull() ?: continue
+                    val n = v.javaClass.name
+                    if (n.startsWith("com.miui.aod") || n.startsWith("com.android.keyguard")) {
+                        queue.add(v)
+                        next++
+                    }
+                }
+            }
+            depth++
+            level = next
+        }
+        return null
     }
 
     // ── MiuiFullAodManager.fullAodEnable() → false（2026-08-21, 方案 B）──
@@ -404,20 +469,50 @@ object AodHook : BaseHook() {
         log("AodHook: getCutoutPosition 防御未装上(无 classloader 可见 com.miui.aod) — 依赖 CutoutAlwaysHook #2 非 null cutout 兜底")
     }
 
-    /** ActivityThread.mAllClassLoaders 全量遍历 —— 覆盖 plugin classloader 已创建的场景. */
+    /** ActivityThread 上的 classloader 收集(兼容多个版本字段名).
+     *
+     *  ★2026-09-19 修正: **Android 17 / HyperOS4 已移除 `mAllClassLoaders`**
+     *  (实测 `No field mAllClassLoaders in class android.app.ActivityThread`; OS3/Android 16
+     *  及以前存在) → 旧全量遍历在 OS4 上恒空, 是"hook 拿不到 MIUIAod plugin CL"的直接原因。
+     *  改: ① 仍试 mAllClassLoaders(兼容旧系统) ② 退回 `mPackages`
+     *  (ArrayMap<String, WeakReference<LoadedApk>>, 各版本都有) → LoadedApk#getClassLoader()。
+     *  失败不再打印(主路径 = pluginClassLoaderFrom 实例反查, 日志由调用方汇总)。 */
     private fun allClassLoaders(): List<ClassLoader> {
-        val result = mutableListOf<ClassLoader>()
+        val result = LinkedHashSet<ClassLoader>()
         runCatching {
             val at = Class.forName("android.app.ActivityThread")
             val thread = at.getMethod("currentActivityThread").invoke(null) ?: return@runCatching
-            val f = at.getDeclaredField("mAllClassLoaders").apply { isAccessible = true }
-            when (val v = f.get(thread)) {
-                is Array<*> -> v.forEach { if (it is ClassLoader) result.add(it) }
-                is List<*> -> v.forEach { if (it is ClassLoader) result.add(it) }
-                is Iterable<*> -> v.forEach { if (it is ClassLoader) result.add(it) }
+            // ① mAllClassLoaders(Android 16 及以前)
+            runCatching {
+                val f = at.getDeclaredField("mAllClassLoaders").apply { isAccessible = true }
+                collectLoaders(f.get(thread), result)
             }
-        }.onFailure { log("AodHook: allClassLoaders failed: ${it.message}") }
-        return result
+            // ② mPackages → LoadedApk.getClassLoader()(Android 17 新路径)
+            runCatching {
+                val f = at.getDeclaredField("mPackages").apply { isAccessible = true }
+                val packages = f.get(thread) as? Map<*, *> ?: return@runCatching
+                for (entry in packages.values) {
+                    val loadedApk = when (entry) {
+                        is java.lang.ref.WeakReference<*> -> entry.get()
+                        else -> entry
+                    } ?: continue
+                    runCatching {
+                        val cl = loadedApk.javaClass
+                            .getMethod("getClassLoader").invoke(loadedApk) as? ClassLoader
+                        if (cl != null) result.add(cl)
+                    }
+                }
+            }
+        }
+        return result.toList()
+    }
+
+    private fun collectLoaders(v: Any?, out: MutableSet<ClassLoader>) {
+        when (v) {
+            is ClassLoader -> out.add(v)
+            is Array<*> -> v.forEach { collectLoaders(it, out) }
+            is Iterable<*> -> v.forEach { collectLoaders(it, out) }
+        }
     }
 
     // ── DozeLifecycleOwner.initState 防崩(2026-08-21) ──
@@ -508,13 +603,18 @@ object AodHook : BaseHook() {
             log("AodHook: #3 跳过 (非 flip1: 外屏 AOD 原生 state 4 可亮, 不抬屏/不改亮度)")
         }
 
-        // #4 onDreamingStarted(): one-shot trigger for the runtime (Layer 2) hooks.
+        // #4 onDreamingStarted(): runtime (Layer 2) hooks 的补装点.
         runCatching {
             val method = android.service.dreams.DreamService::class.java
                 .getDeclaredMethod("onDreamingStarted")
             method.isAccessible = true
             hook(method, after { chain, result ->
-                if (!runtimeHooksInstalled) installRuntimeHooks(chain.thisObject)
+                // onDreamingStarted 时 plugin 必已挂到 MiuiDozeService(日志: 第 2 参即
+                // DozeServicePluginImpl) → 用实例反查 plugin CL 补装(onCreate 那次若 plugin
+                // 尚未就绪则此处兜底; 幂等)。
+                val owner = chain.thisObject
+                installFlipLinkageDefense(owner?.javaClass?.classLoader ?: classLoader, owner)
+                if (!runtimeHooksInstalled) installRuntimeHooks(owner)
                 result
             })
             log("AodHook: #4 DreamService.onDreamingStarted hooked")
@@ -524,7 +624,6 @@ object AodHook : BaseHook() {
     // ── Layer 2: runtime hooks via the DozeMachine's own classloader ──
     private fun installRuntimeHooks(dreamService: Any?) {
         if (dreamService == null || runtimeHooksInstalled) return
-        runtimeHooksInstalled = true
         runCatching {
             val machine = findObjectByClassName(dreamService, "com.miui.aod.doze.DozeMachine")
                 ?: run { log("AodHook/L2: DozeMachine not found"); return }
@@ -578,6 +677,9 @@ object AodHook : BaseHook() {
             // DISABLED (2026-08-21, 精简): fullAodEnable→false 已上游覆盖
             // hookDozeHostIsFullAod(dreamService)
             hookFlipLinkageStyleController(machineCl)
+            // 装齐后才置位: 若首次图遍历失败(如 DozeMachine 未找到) → 下次 onDreamingStarted
+            //   可重试(2026-09-19: 旧版在入口置位 → 首次失败即永久放弃, 是"hook 从未装上"的隐藏原因)
+            runtimeHooksInstalled = true
         }.onFailure { log("AodHook/L2: installRuntimeHooks failed", it) }
     }
 

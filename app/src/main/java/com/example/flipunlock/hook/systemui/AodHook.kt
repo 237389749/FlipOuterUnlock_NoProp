@@ -22,7 +22,10 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
  *      同进程再次 create 抛 IllegalStateException → SystemUI 崩溃环; 用户复现: 锁屏→电源→
  *      AOD→电源→锁屏→崩溃重绘)。onCreate(systemui 主 CL, 注入即装) after 时 plugin 必已加载
  *      → 遍历 classloader 装 initState 防崩(反射 mState DESTROYED→INITIALIZED)。
- *   3. #3 DreamService.setDozeScreenState {0,1,3,4}→2 (ON 亮屏): flip1 实测 4 不亮、2 必亮。
+ *   3. #3 DreamService.setDozeScreenState {1,3,4}→2 (ON 亮屏): flip1 实测 4 不亮、2 必亮。
+ *      ★AOD gate (2026-08-21): 系统设置关闭 AOD(Settings.Secure doze_always_on != 1) 时
+ *      本 hook 放行不重写 —— 否则 GXZW 息屏指纹提示(原生旁路) 触发的 doze 会被抬成
+ *      2(ON 全亮): 屏幕亮起 + 背景全黑 + 屏幕指纹图标(用户实测现象)。
  *   4. L2(onDreamingStarted, machineCl):
  *      - DozeService.setDozeScreenState {0,1,3,4}→2(与 #3 同, plugin 层双保险)
  *      - FlipLinkageStyleController.isFlipped()→false: 切断 CategoryFactory FlipLinkage
@@ -189,6 +192,45 @@ object AodHook : BaseHook() {
         val at = Class.forName("android.app.ActivityThread")
         at.getMethod("currentProcessName").invoke(null) as? String
     }.getOrNull()
+
+    // ── AOD gate (2026-08-21, 用户实测: AOD 关闭后屏幕仍亮起+全黑+屏幕指纹图标) ──
+    //
+    // 系统设置关掉 AOD(doze_always_on=0) 只关掉 AOD **内容**, 关不掉 doze/dream:
+    //   DozeService.create 第 3 道门 !isAodEnable(sysui) 时, 仅 "GXZW && 指纹豁免" 或
+    //   "通知动画==2" 才继续(否则 finish) → 屏下指纹息屏提示是一条与 AOD 开关正交的
+    //   原生旁路(refMD AOD_Full_Chain §3.1/§3.3: resolveIntermediateState #2 GXZW+指纹图标
+    //   → DOZE_AOD, #3 hasFodTurnedOnScreen → DOZE_AOD);
+    //   委托链里的 MiuiGxzwDozeStatePreventingAdapter 还会为指纹把屏幕按在亮态。
+    // 此时若本模块照旧把状态重写成 2(ON 全亮), 就出现: 屏幕亮起 + 背景全黑(无 AOD 内容)
+    //   + 只剩屏幕指纹图标 —— 与"关掉 AOD 就不再点亮"的预期相反。
+    // → AOD 关闭时放行 setDozeScreenState, 让 doze 走原生。
+    // 运行时判定(而非安装期早退)的理由: AOD 开关切换后无需重启 SystemUI 即生效。
+    // 取不到 Context 时返回 true(保守: 保持原有 AOD 行为, 不误关功能)。
+    @Volatile
+    private var aodOffGateLogged = false
+
+    private fun aodEnabledBySetting(): Boolean = runCatching {
+        val ctx = systemContext() ?: return@runCatching true
+        android.provider.Settings.Secure.getInt(ctx.contentResolver, "doze_always_on", 0) == 1
+    }.getOrDefault(true)
+
+    /** 当前进程可用的 Context: app 进程走 currentApplication, system_server 走 getSystemContext. */
+    private fun systemContext(): android.content.Context? = runCatching {
+        val at = Class.forName("android.app.ActivityThread")
+        (at.getMethod("currentApplication").invoke(null) as? android.content.Context)
+            ?: (at.getMethod("getSystemContext").invoke(null) as? android.content.Context)
+    }.getOrNull()
+
+    /** true = AOD 已关闭, 调用方应原样放行屏幕状态(不重写为 2). */
+    private fun passThroughWhenAodOff(state: Int, tag: String): Boolean {
+        if (aodEnabledBySetting()) return false
+        if (!aodOffGateLogged) {
+            aodOffGateLogged = true
+            log("AodHook: AOD 已关闭 (Settings.Secure doze_always_on != 1) → $tag(" +
+                "$state) 放行, 不抬屏 (GXZW 指纹提示走原生 doze)")
+        }
+        return true
+    }
 
     // ── MiuiDozeService.onCreate → 补装 initState 防崩（2026-08-21 晚, 根治崩溃环）──
     //
@@ -367,6 +409,8 @@ object AodHook : BaseHook() {
         // setDozeScreenState(1); 阻塞所有 OFF 状态(0,1,3)并强制 2(ON); 4(AOD ON)也改 2,
         // 避免复位超时振荡。AOD 内容渲染在"亮屏 ON"状态 → 物理屏必亮(flip1 实测 4 方案不亮)。
         // 值: 0=FINISH 1=DOZE 2=ON/PULSING 3=DOZE_SUSPEND 4=DOZE_AOD
+        // 现状(2026-08-21 起): 仅 {1,3,4}→2, state 0 放行; 且系统设置关闭 AOD
+        //   (doze_always_on != 1) 时整体放行 —— 见 passThroughWhenAodOff。
         runCatching {
             val method = android.service.dreams.DreamService::class.java
                 .getDeclaredMethod("setDozeScreenState", Int::class.javaPrimitiveType!!)
@@ -380,6 +424,9 @@ object AodHook : BaseHook() {
                     //   → doze 态触摸无人处理 = "看似锁屏但触摸无反应"卡死(用户实测复现)。
                     //   0 只在 FINISH/COVERMODE 出现, AOD 显示期间(DOZE_AOD=4)不会 0, 放行安全。
                     1, 3, 4 -> {
+                        // AOD gate: 系统设置已关 AOD 时放行, 不抬屏(见 passThroughWhenAodOff)
+                        if (passThroughWhenAodOff(state, "#3 DreamService.setDozeScreenState"))
+                            return@hook chain.proceed()
                         log("AodHook: #3 setDozeScreenState($state) → 2 (ON 亮屏, 旧版方案)")
                         chain.proceed(arrayOf<Any?>(2))
                     }
@@ -482,7 +529,12 @@ object AodHook : BaseHook() {
                 val s = chain.args[0] as? Int ?: return@hook chain.proceed()
                 when (s) {
                     // 2026-08-21 修复: 0(FINISH/OFF) 放行(与 #3 同步, dream 结束正常熄屏)
-                    1, 3, 4 -> chain.proceed(arrayOf<Any?>(2))
+                    1, 3, 4 -> {
+                        // AOD gate: 系统设置已关 AOD 时放行, 不抬屏(见 passThroughWhenAodOff)
+                        if (passThroughWhenAodOff(s, "L2 DozeService.setDozeScreenState"))
+                            return@hook chain.proceed()
+                        chain.proceed(arrayOf<Any?>(2))
+                    }
                     else -> chain.proceed()
                 }
             }

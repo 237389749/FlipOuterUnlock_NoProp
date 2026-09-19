@@ -27,7 +27,7 @@
 - `SogouInputHook` — Sogou IME layout fixes
 
 **AOD（outer-screen always-on display）**
-- `AodHook` — outer-screen AOD shows **inner-screen multi-style clock**（`MiuiFullAodManager.fullAodEnable→false` 切断"锁屏时钟+黑" + `isFlipped→false` 切断 FlipLinkage 样式）; 亮屏（`setDozeScreenState {1,3,4}→2`, flip1 实测 4 不亮 2 亮）; `DozeLifecycleOwner.initState` 崩溃防崩（`MiuiDozeService.onCreate` 补装, 修 SystemUI 崩溃环）
+- `AodHook` — **dual-device** (flip1 + flip2/HyperOS4). Outer-screen AOD shows **inner-screen multi-style clock**（`isFlipped→false` 切断 FlipLinkage 样式替换 — flip1 修"外屏专用样式", flip2/OS4 修"**设置里选了样式却不生效**"; `MiuiFullAodManager.fullAodEnable→false` 切断"锁屏时钟+黑"）; 亮屏（`setDozeScreenState {1,3,4}→2`，**flip1 only** — flip2 原生 state 4 可亮, 抬屏只会全亮度+改亮度语义）; `DozeLifecycleOwner.initState` 崩溃防崩（`MiuiDozeService.onCreate` 补装, 修 SystemUI 崩溃环）
 
 **SystemUI**
 - `FlashlightHook` — flashlight flip-prompt bypass + direct toggle
@@ -47,11 +47,11 @@ onSystemServerStarting (system_server):
 ├── AppFullscreen          ← size-compat letterbox 禁用
 ├── AppWhitelist           ← 外屏 app 白名单
 ├── InputMethodHook        ← IME 自由
-└── AodHook.hookFramework  ← AOD framework 侧（flip1; 内部 hook 已精简, 保留入口）
+└── AodHook.hookFramework  ← AOD framework 侧（双机型入口; #1/#2 已 DISABLED）
 
 onPackageReady:
 ├── CutoutAlwaysHook [*]         ← 全进程非 null 空 cutout → 全局全屏（相机防御）
-├── AodHook [systemui/aod]       ← 外屏 AOD 多样式 + 亮屏 + initState 崩溃防崩
+├── AodHook [systemui/aod]       ← 外屏 AOD 多样式 + FlipLinkage 切断（flip2 修"样式选择不生效"; 亮屏 hook 仅 flip1）
 ├── FlashlightHook [systemui]    ← 手电筒直开
 ├── ControlCenterHook [systemui] ← 控制中心 COMPACT 编辑按钮
 ├── NotifMenuFixHook [systemui]  ← 通知菜单普通样式
@@ -118,7 +118,7 @@ system, systemui, aod, camera, fliphome, sogou, miuihome, gallery
 - `SogouInputHook` — 输入法布局修复
 
 **AOD（外屏息屏显示）**
-- `AodHook` — 外屏 AOD 显示**内屏多样式时钟**（`MiuiFullAodManager.fullAodEnable→false` 根治"锁屏时钟+黑" + `isFlipped→false` 切断 FlipLinkage 萌宠/简单时钟）；亮屏（`setDozeScreenState {1,3,4}→2`，flip1 实测 4 不亮 2 亮）；`DozeLifecycleOwner.initState` 崩溃防崩（`MiuiDozeService.onCreate` 补装，修 SystemUI 崩溃环）
+- `AodHook` — **双机型**（flip1 + flip2/HyperOS4）。外屏 AOD 显示**内屏多样式时钟**（`isFlipped→false` 切断 FlipLinkage 样式替换 —— flip1 修"外屏专用样式"，flip2/OS4 修"**设置里选了样式却不生效**"；`MiuiFullAodManager.fullAodEnable→false` 根治"锁屏时钟+黑"）；亮屏（`setDozeScreenState {1,3,4}→2`，**仅 flip1** —— flip2 原生 state 4 即可亮屏，抬成 2 只会全亮度 ON + 改 doze 亮度语义）；`DozeLifecycleOwner.initState` 崩溃防崩（`MiuiDozeService.onCreate` 补装，修 SystemUI 崩溃环）
 
 **SystemUI**
 - `FlashlightHook` — 手电筒翻转提示绕过 + 直接 toggle
@@ -138,11 +138,11 @@ onSystemServerStarting (system_server):
 ├── AppFullscreen          ← size-compat letterbox 禁用
 ├── AppWhitelist           ← 外屏 app 白名单
 ├── InputMethodHook        ← IME 自由
-└── AodHook.hookFramework  ← AOD framework 侧（flip1; 内部 hook 已精简, 保留入口）
+└── AodHook.hookFramework  ← AOD framework 侧（双机型入口; #1/#2 已 DISABLED）
 
 onPackageReady:
 ├── CutoutAlwaysHook [*]         ← 全进程非 null 空 cutout → 全局全屏（相机防御）
-├── AodHook [systemui/aod]       ← 外屏 AOD 多样式 + 亮屏 + initState 崩溃防崩
+├── AodHook [systemui/aod]       ← 外屏 AOD 多样式 + FlipLinkage 切断（flip2 修"样式选择不生效"；亮屏 hook 仅 flip1）
 ├── FlashlightHook [systemui]    ← 手电筒直开
 ├── ControlCenterHook [systemui] ← 控制中心 COMPACT 编辑按钮
 ├── NotifMenuFixHook [systemui]  ← 通知菜单普通样式

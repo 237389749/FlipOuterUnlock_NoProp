@@ -54,7 +54,7 @@ class Main : XposedModule() {
         FlashlightHook,             // systemui: 手电筒(跳弹窗 + setFlipListening 直接 toggle)
         ControlCenterHook,          // systemui: flip 控制中心 COMPACT 编辑按钮 + device center 尺寸(移植 MixFlipMod, unlock2 重写)
         NotifMenuFixHook,           // systemui: 外屏通知菜单按普通手机样式(移植 MixFlipMod hookNotification, 补全逻辑链)
-        AodHook,                    // systemui: flip1 AOD 外屏显示(属性4版: fullAodEnable→false 多样式 + initState 崩溃防崩)
+        AodHook,                    // systemui: 外屏 AOD(双机型: flip1 亮屏钉 DOZE_AOD + 多样式; flip2 OS4 切断 FlipLinkage 样式替换, 修的"选择样式不生效")
         SogouInputHook,             // ime: 输入法键盘高度/布局修复
         WidgetRemove,               // fliphome: 外屏桌面小部件移除
         RecentsCacheFix,            // fliphome: 最近任务缓存
@@ -76,7 +76,7 @@ class Main : XposedModule() {
         AppWhitelist.hook(param)       // 外屏 app 白名单(全部 app setForceDisplayCompatMode allowstart)
         AppInterceptCacheFix.hook(param) // 拦截判定缓存修复: hasActivityInterceptionKey→false(被拦过缓存 true 导致放行无效, 2026-09-18 国际版)
         InputMethodHook.hook(param)    // IME 外屏自由(shouldShowCurrentInput→true / 转屏 toast 抑制)
-        AodHook.hookFramework(param)   // AOD framework 侧(flip1; flip2 内部 SKIP)
+        AodHook.hookFramework(param)   // AOD framework 侧(双机型入口; #1/#2 已 DISABLED)
     }
 
     override fun onPackageReady(param: PackageReadyParam) {

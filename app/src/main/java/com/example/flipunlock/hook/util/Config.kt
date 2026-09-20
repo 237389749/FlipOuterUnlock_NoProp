@@ -17,7 +17,9 @@ package com.example.flipunlock.hook.util
  *   setprop persist.flipunlock.display.aod false          # outer-screen AOD (AodHook)
  *   setprop persist.flipunlock.display.cutout false       # cutout 全清 (CutoutZeroHook + CutoutAlwaysHook)
  *   setprop persist.flipunlock.display.fullscreen false   # force fullscreen (AppFullscreen)
- * 恢复默认: setprop <key> ""   (空值 = 默认 true)
+ *   setprop persist.flipunlock.devicestate.pin true       # DeviceState 钉死(单外屏, §44.9) —— ★默认 false
+ *   setprop persist.flipunlock.devicestate.value 4        # 目标 state(默认 4; 0/1/4=外屏单屏, 禁用 5/6)
+ * 恢复默认: setprop <key> ""   (空值 = 默认 true; 例外: devicestate.pin 默认 false)
  *
  * 注(2026-08-21): NoProp 为属性 4(flip 原生)版本 —— 无身份伪装/旋转/音量/壁纸/续接
  *   hook(旧项目属性 1 方案已排除)。
@@ -28,6 +30,8 @@ object Config {
         "persist.flipunlock.display.aod",
         "persist.flipunlock.display.cutout",
         "persist.flipunlock.display.fullscreen",
+        "persist.flipunlock.devicestate.pin",
+        "persist.flipunlock.devicestate.value",
     )
 
     // Master switch —— 所有 hook(含常开的优化项)统一受它控制
@@ -37,6 +41,12 @@ object Config {
     val displayAod: Boolean get() = enabled && raw("persist.flipunlock.display.aod", true)
     val displayCutout: Boolean get() = enabled && raw("persist.flipunlock.display.cutout", true)
     val displayFullscreen: Boolean get() = enabled && raw("persist.flipunlock.display.fullscreen", true)
+
+    // DeviceState 钉死(单外屏专用, refMD §44.9) —— 把物理上报的折叠态固定成"外屏单屏态"
+    // ★默认关闭: 属实验性固定(与属性 4 原生布局叠加), 需要时显式 setprop 开启
+    // 值只能是外屏单屏态 0/1/4(默认 4, 不带 TRIGGER_SLEEP); 5/6(双屏)会致 applyLayoutLocked NPE
+    val deviceStatePin: Boolean get() = enabled && raw("persist.flipunlock.devicestate.pin", false)
+    val deviceStatePinValue: Int get() = rawInt("persist.flipunlock.devicestate.value", 4)
 
     /** Print all toggle keys and values. */
     fun logConfig() {
@@ -54,6 +64,16 @@ object Config {
             Class.forName("android.os.SystemProperties")
                 .getDeclaredMethod("getBoolean", String::class.java, Boolean::class.javaPrimitiveType!!)
                 .invoke(null, key, default) as? Boolean ?: default
+        } catch (_: Exception) {
+            default
+        }
+    }
+
+    private fun rawInt(key: String, default: Int): Int {
+        return try {
+            Class.forName("android.os.SystemProperties")
+                .getDeclaredMethod("getInt", String::class.java, Int::class.javaPrimitiveType!!)
+                .invoke(null, key, default) as? Int ?: default
         } catch (_: Exception) {
             default
         }

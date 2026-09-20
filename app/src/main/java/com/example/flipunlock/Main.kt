@@ -10,6 +10,7 @@ import com.example.flipunlock.hook.system_server.AppFullscreen
 import com.example.flipunlock.hook.system_server.AppInterceptCacheFix
 import com.example.flipunlock.hook.system_server.AppWhitelist
 import com.example.flipunlock.hook.system_server.CutoutZeroHook
+import com.example.flipunlock.hook.system_server.DeviceStatePin
 import com.example.flipunlock.hook.system_server.InputMethodHook
 import com.example.flipunlock.hook.systemui.AodHook
 import com.example.flipunlock.hook.systemui.ControlCenterHook
@@ -72,6 +73,7 @@ class Main : XposedModule() {
         //                                    hook DeviceStateToLayoutMap.get 强制 state0 → applyLayoutLocked NPE
         //                                    (LogicalDisplay null, android.display 崩, LSP 安全模式) — 双机型属性4均不需要
         CutoutZeroHook.hook(param)     // system_server 端 cutout 源头清零(calculateDisplayCutoutForRotation→NO_CUTOUT, refMD §17)
+        DeviceStatePin.hook(param)     // [★默认关闭] persist.flipunlock.devicestate.pin: 物理折叠态钉死到外屏单屏态(默认 4, 不带 TRIGGER_SLEEP; §44.9)
         AppFullscreen.hook(param)      // size-compat 禁用(全屏)
         AppWhitelist.hook(param)       // 外屏 app 白名单(全部 app setForceDisplayCompatMode allowstart)
         AppInterceptCacheFix.hook(param) // 拦截判定缓存修复: hasActivityInterceptionKey→false(被拦过缓存 true 导致放行无效, 2026-09-18 国际版)

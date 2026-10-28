@@ -6,8 +6,18 @@ package com.example.flipunlock.hook.util
  * ★2026-09-19 开关精简: 只保留「改动会翻转可见行为、出问题需要一键回退」的开关 + 总开关。
  *   纯优化项不再单独设开关, 改为**常开、仅受总开关 `enable` 控制**:
  *     app.whitelist / app.intercept / ime / systemui.flashlight /
- *     ui.controlcenter / ui.notifmenu / ui.widget / ui.recentsmenu
+ *     ui.controlcenter / ui.notifmenu / ui.recentsmenu
  *   已弃用并移除: display.state(DisplayStateHook 未注册, 文件保留供回退实验)。
+ *
+ * ★2026-10-28 恢复 `ui.widget`（反馈: "关闭全屏后小部件没有恢复"）:
+ *   `WidgetRemove` 把 fliphome 的 refreshWindow(ADD) 全改写成 REMOVE → 小部件窗口永不添加,
+ *   而"全屏"是另一套机制(AppFullscreen 改 window flag/letterbox), 关全屏不会恢复小部件;
+ *   精简时又把 ui.widget 并进常开项 → 用户**没有任何手段**恢复原生小部件。
+ *   现改为: `uiWidget`(默认 true) 单独可关, 且 **只有全屏模式下才接管小部件**
+ *   → `widgetOverlayHooks = uiWidget && displayFullscreen`:
+ *     · 关全屏(display.fullscreen=false) → 自动恢复原生小部件（可见 + 可触摸）✓
+ *     · 想全屏但保留小部件 → setprop persist.flipunlock.ui.widget false
+ *     · 默认(true+true) 行为与之前完全一致
  *
  * List all keys and current values:
  *   getprop | grep persist.flipunlock
@@ -17,6 +27,7 @@ package com.example.flipunlock.hook.util
  *   setprop persist.flipunlock.display.aod false          # outer-screen AOD (AodHook)
  *   setprop persist.flipunlock.display.cutout false       # cutout 全清 (CutoutZeroHook + CutoutAlwaysHook)
  *   setprop persist.flipunlock.display.fullscreen false   # force fullscreen (AppFullscreen)
+ *   setprop persist.flipunlock.ui.widget false            # 不移除/不接管外屏小部件(恢复原生小部件)
  *   setprop persist.flipunlock.devicestate.pin true       # DeviceState 钉死(单外屏, §44.9) —— ★默认 false
  *   setprop persist.flipunlock.devicestate.value 4        # 目标 state(默认 4; 0/1/4=外屏单屏, 禁用 5/6)
  * 恢复默认: setprop <key> ""   (空值 = 默认 true; 例外: devicestate.pin 默认 false)
@@ -30,6 +41,7 @@ object Config {
         "persist.flipunlock.display.aod",
         "persist.flipunlock.display.cutout",
         "persist.flipunlock.display.fullscreen",
+        "persist.flipunlock.ui.widget",
         "persist.flipunlock.devicestate.pin",
         "persist.flipunlock.devicestate.value",
     )
@@ -41,6 +53,13 @@ object Config {
     val displayAod: Boolean get() = enabled && raw("persist.flipunlock.display.aod", true)
     val displayCutout: Boolean get() = enabled && raw("persist.flipunlock.display.cutout", true)
     val displayFullscreen: Boolean get() = enabled && raw("persist.flipunlock.display.fullscreen", true)
+
+    // 外屏小部件接管（WidgetRemove 移除窗口 / WidgetTouchPassthrough 触摸透传）
+    //   uiWidget: 单独开关, 默认 true(接管)
+    //   widgetOverlayHooks: **只有全屏模式下才接管** —— 关全屏即"回到原生外屏", 小部件自动恢复
+    //     （2026-10-28 反馈修复: 之前两者常开且互不相关, 关全屏后小部件不会回来）
+    val uiWidget: Boolean get() = enabled && raw("persist.flipunlock.ui.widget", true)
+    val widgetOverlayHooks: Boolean get() = uiWidget && displayFullscreen
 
     // DeviceState 钉死(单外屏专用, refMD §44.9) —— 把物理上报的折叠态固定成"外屏单屏态"
     // ★默认关闭: 属实验性固定(与属性 4 原生布局叠加), 需要时显式 setprop 开启

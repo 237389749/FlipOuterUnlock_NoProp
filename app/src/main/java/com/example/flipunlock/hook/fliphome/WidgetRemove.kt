@@ -49,9 +49,11 @@ object WidgetRemove : BaseHook() {
     private const val ACTION_REMOVE_WINDOW = 2
 
     override fun setupHooks(param: PackageReadyParam) {
-        // 开关精简(2026-09-19): 纯优化项不再单独设开关, 只受总开关控制
-        if (!Config.enabled) {
-            log("WidgetRemove: DISABLED by persist.flipunlock.enable")
+        // 2026-10-28: 改由 widgetOverlayHooks(= ui.widget && display.fullscreen) 控制
+        //   关全屏 → 回到原生外屏 → 小部件自动恢复（修复"关全屏后小部件没恢复"的反馈）
+        //   想全屏但保留小部件 → setprop persist.flipunlock.ui.widget false
+        if (!Config.widgetOverlayHooks) {
+            log("WidgetRemove: DISABLED (ui.widget=${Config.uiWidget} fullscreen=${Config.displayFullscreen}) → 小部件恢复原生")
             return
         }
         runCatching {

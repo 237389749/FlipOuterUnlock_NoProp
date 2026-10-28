@@ -59,9 +59,11 @@ object WidgetTouchPassthrough : BaseHook() {
     }
 
     override fun setupHooks(param: PackageReadyParam) {
-        // 开关精简(2026-09-19): 纯优化项不再单独设开关, 只受总开关控制
-        if (!Config.enabled) {
-            log("WidgetTouchPassthrough: DISABLED by persist.flipunlock.enable")
+        // 2026-10-28: 与 WidgetRemove 同一套开关 —— widgetOverlayHooks(= ui.widget && display.fullscreen)。
+        //   只关 WidgetRemove 会落到"可见但点不动"的透传态, 不是用户要的"恢复小部件",
+        //   所以两个 widget hook 必须一起受控（关全屏 = 完全回到原生小部件）。
+        if (!Config.widgetOverlayHooks) {
+            log("WidgetTouchPassthrough: DISABLED (ui.widget=${Config.uiWidget} fullscreen=${Config.displayFullscreen}) → 小部件恢复原生")
             return
         }
         val clazz = findGroupViewClass(param.classLoader) ?: run {

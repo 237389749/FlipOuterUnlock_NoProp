@@ -9,15 +9,16 @@ package com.example.flipunlock.hook.util
  *     ui.controlcenter / ui.notifmenu / ui.recentsmenu
  *   已弃用并移除: display.state(DisplayStateHook 未注册, 文件保留供回退实验)。
  *
- * ★2026-10-28 恢复 `ui.widget`（反馈: "关闭全屏后小部件没有恢复"）:
+ * ★2026-10-28 `ui.widget` 恢复为可关 + 与全屏**联动**（反馈: "关闭全屏后小部件没有恢复"）:
  *   `WidgetRemove` 把 fliphome 的 refreshWindow(ADD) 全改写成 REMOVE → 小部件窗口永不添加,
  *   而"全屏"是另一套机制(AppFullscreen 改 window flag/letterbox), 关全屏不会恢复小部件;
  *   精简时又把 ui.widget 并进常开项 → 用户**没有任何手段**恢复原生小部件。
- *   现改为: `uiWidget`(默认 true) 单独可关, 且 **只有全屏模式下才接管小部件**
- *   → `widgetOverlayHooks = uiWidget && displayFullscreen`:
- *     · 关全屏(display.fullscreen=false) → 自动恢复原生小部件（可见 + 可触摸）✓
- *     · 想全屏但保留小部件 → setprop persist.flipunlock.ui.widget false
- *     · 默认(true+true) 行为与之前完全一致
+ *   设计定案（用户 2026-10-28）: 全屏与小部件接管**是一体的** ——
+ *   小部件不移除时那块区域仍拦截触摸, 全屏只是"摆设"; 即"小部件存在 ⇒ 必然不需要全屏"。
+ *   → 唯一闸门 `fullscreenActive = displayFullscreen && uiWidget`（任一为 false 即整组关闭）:
+ *     · display.fullscreen=false → 全屏关 + 小部件恢复（可见 + 可触摸）✓
+ *     · ui.widget=false          → 小部件恢复 + **全屏也关**（不允许"全屏但小部件挡触摸"的无意义组合）
+ *     · 两者都 true(默认)        → 全屏 + 小部件接管, 与历史行为完全一致
  *
  * List all keys and current values:
  *   getprop | grep persist.flipunlock
@@ -55,11 +56,16 @@ object Config {
     val displayFullscreen: Boolean get() = enabled && raw("persist.flipunlock.display.fullscreen", true)
 
     // 外屏小部件接管（WidgetRemove 移除窗口 / WidgetTouchPassthrough 触摸透传）
-    //   uiWidget: 单独开关, 默认 true(接管)
-    //   widgetOverlayHooks: **只有全屏模式下才接管** —— 关全屏即"回到原生外屏", 小部件自动恢复
-    //     （2026-10-28 反馈修复: 之前两者常开且互不相关, 关全屏后小部件不会回来）
+    // ★2026-10-28 联动（用户定案）: 全屏与小部件接管是**一体**的 ——
+    //   小部件不移除时那块区域仍然拦截触摸, 全屏就只是"摆设"; 反过来说"小部件存在 ⇒ 必然不需要全屏"。
+    //   ⇒ 两个 property **任一为 false 都等于"回到原生外屏"**, 整组一起关闭:
+    //     · display.fullscreen=false → 全屏关 + 小部件恢复
+    //     · ui.widget=false          → 小部件恢复 + 全屏也关（避免"全屏但小部件挡触摸"的无意义组合）
+    //     · 两者都 true(默认)        → 全屏 + 小部件接管, 与历史行为完全一致
     val uiWidget: Boolean get() = enabled && raw("persist.flipunlock.ui.widget", true)
-    val widgetOverlayHooks: Boolean get() = uiWidget && displayFullscreen
+
+    /** 全屏与小部件接管的唯一有效闸门（两者联动, 不可分离）。 */
+    val fullscreenActive: Boolean get() = displayFullscreen && uiWidget
 
     // DeviceState 钉死(单外屏专用, refMD §44.9) —— 把物理上报的折叠态固定成"外屏单屏态"
     // ★默认关闭: 属实验性固定(与属性 4 原生布局叠加), 需要时显式 setprop 开启

@@ -49,8 +49,10 @@ import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
 object AppFullscreen {
 
     fun hook(param: SystemServerStartingParam) {
-        if (!Config.displayFullscreen) {
-            log("AppFullscreen: DISABLED by persist.flipunlock.display.fullscreen")
+        // 2026-10-28: 与"小部件接管"联动 —— fullscreenActive = display.fullscreen && ui.widget
+        //   （小部件不移除时那块区域仍挡触摸, 全屏只是摆设 ⇒ 两者一起开/一起关）
+        if (!Config.fullscreenActive) {
+            log("AppFullscreen: DISABLED (fullscreen=${Config.displayFullscreen} ui.widget=${Config.uiWidget})")
             return
         }
         log("AppFullscreen: setting up")
@@ -126,7 +128,7 @@ object AppFullscreen {
 
     /** Called from onPackageReady for app processes. */
     fun hookApp(param: PackageReadyParam) {
-        if (!Config.displayFullscreen) return
+        if (!Config.fullscreenActive) return
         if (param.packageName in Exclusions.DEVICE_IDENTITY) return
         safeHook("AppFullscreen") {
             hookSizeCompatScaleMode(param.classLoader)

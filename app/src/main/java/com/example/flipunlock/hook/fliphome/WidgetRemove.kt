@@ -49,10 +49,10 @@ object WidgetRemove : BaseHook() {
     private const val ACTION_REMOVE_WINDOW = 2
 
     override fun setupHooks(param: PackageReadyParam) {
-        // 2026-10-28: 改由 widgetOverlayHooks(= ui.widget && display.fullscreen) 控制
-        //   关全屏 → 回到原生外屏 → 小部件自动恢复（修复"关全屏后小部件没恢复"的反馈）
-        //   想全屏但保留小部件 → setprop persist.flipunlock.ui.widget false
-        if (!Config.widgetOverlayHooks) {
+        // 2026-10-28: 由 fullscreenActive(= display.fullscreen && ui.widget) 控制。
+        //   全屏与小部件接管**联动**: 小部件不移除时那块区域仍挡触摸, 全屏只是摆设
+        //   ⇒ 任一开关关闭 = 回到原生外屏(小部件可见+可触摸)。
+        if (!Config.fullscreenActive) {
             log("WidgetRemove: DISABLED (ui.widget=${Config.uiWidget} fullscreen=${Config.displayFullscreen}) → 小部件恢复原生")
             return
         }

@@ -67,9 +67,13 @@ onPackageReady:
 纯优化项（白名单 / 拦截缓存 / IME / 手电筒 / 控制中心 / 通知菜单 / 最近任务）
 **常开、仅受 `enable` 控制**，不再单独设 property（`reboot` 后生效, 无 UI）:
 
-> **2026-10-28 例外**：`ui.widget` 已恢复为独立开关（反馈"关闭全屏后小部件没有恢复"）。
-> 小部件接管 = `WidgetRemove`（ADD→REMOVE，窗口永不添加）+ `WidgetTouchPassthrough`（触摸透传），
-> 现在受 **`ui.widget && display.fullscreen`** 控制：**关掉全屏即回到原生外屏，小部件自动恢复**。
+> **2026-10-28 例外：`ui.widget` 恢复为可关，并与全屏联动**（反馈"关闭全屏后小部件没有恢复"）。
+> 小部件接管 = `WidgetRemove`（ADD→REMOVE，窗口永不添加）+ `WidgetTouchPassthrough`（触摸透传）。
+> **唯一闸门 `fullscreenActive = display.fullscreen && ui.widget`：任一为 false 即整组关闭。**
+> 理由（设计定案）：小部件不移除时那块区域仍拦截触摸，全屏就只是"摆设"；
+> 反过来说"小部件存在 ⇒ 必然不需要全屏"。
+> - 关全屏 → 全屏关 + 小部件恢复（可见 + 可触摸）
+> - 关 `ui.widget` → 小部件恢复 + **全屏也关**（不允许"全屏但小部件挡触摸"的无意义组合）
 
 ```bash
 getprop | grep persist.flipunlock          # list
@@ -82,8 +86,8 @@ setprop persist.flipunlock.display.aod ""                # 恢复默认(true)
 | `persist.flipunlock.enable` | true | **Master switch**（关掉 = 全部 hook 停用，含常开优化项）|
 | `persist.flipunlock.display.aod` | true | Outer-screen AOD (AodHook) |
 | `persist.flipunlock.display.cutout` | true | Cutout 全清 (CutoutZeroHook + CutoutAlwaysHook) |
-| `persist.flipunlock.display.fullscreen` | true | Force fullscreen (AppFullscreen)；**关掉它也会让小部件恢复** |
-| `persist.flipunlock.ui.widget` | true | 接管外屏小部件（移除/透传）；设 false = 全屏下也保留原生小部件 |
+| `persist.flipunlock.display.fullscreen` | true | Force fullscreen (AppFullscreen)；关掉它 → 整组关闭（含小部件恢复）|
+| `persist.flipunlock.ui.widget` | true | 接管外屏小部件（移除/透传）；设 false → 整组关闭（小部件恢复 + **全屏也关**）|
 
 常开（无独立 property）: AppWhitelist / AppInterceptCacheFix / InputMethodHook + SogouInputHook /
 FlashlightHook / ControlCenterHook / NotifMenuFixHook / RecentsCacheFix。
@@ -163,10 +167,13 @@ onPackageReady:
 纯优化项（白名单 / 拦截缓存 / IME / 手电筒 / 控制中心 / 通知菜单 / 最近任务）
 **常开、仅受 `enable` 控制**，不再单独设 property（重启生效，无 UI）：
 
-> **2026-10-28 例外：`ui.widget` 已恢复为独立开关**（反馈"关闭全屏后小部件没有恢复"）。
-> 小部件接管 = `WidgetRemove`（ADD→REMOVE，窗口永不添加）+ `WidgetTouchPassthrough`（触摸透传），
-> 现受 **`ui.widget && display.fullscreen`** 控制 → **关掉全屏即回到原生外屏，小部件自动恢复**；
-> 想全屏但保留小部件 → `setprop persist.flipunlock.ui.widget false`。
+> **2026-10-28 例外：`ui.widget` 恢复为可关，并与全屏联动**（反馈"关闭全屏后小部件没有恢复"）。
+> 小部件接管 = `WidgetRemove`（ADD→REMOVE，窗口永不添加）+ `WidgetTouchPassthrough`（触摸透传）。
+> **唯一闸门 `fullscreenActive = display.fullscreen && ui.widget`：任一为 false 即整组关闭。**
+> 理由（设计定案）：小部件不移除时那块区域仍拦截触摸，全屏只是"摆设"；
+> 反过来说"小部件存在 ⇒ 必然不需要全屏"。
+> - 关全屏 → 全屏关 + 小部件恢复（可见 + 可触摸）
+> - 关 `ui.widget` → 小部件恢复 + **全屏也关**（不允许"全屏但小部件挡触摸"的无意义组合）
 
 ```bash
 getprop | grep persist.flipunlock          # 查看
@@ -179,8 +186,8 @@ setprop persist.flipunlock.display.aod ""                # 恢复默认(true)
 | `persist.flipunlock.enable` | true | **总开关**（关掉 = 全部 hook 停用，含常开优化项）|
 | `persist.flipunlock.display.aod` | true | 外屏 AOD (AodHook) |
 | `persist.flipunlock.display.cutout` | true | Cutout 全清 (CutoutZeroHook + CutoutAlwaysHook) |
-| `persist.flipunlock.display.fullscreen` | true | 强制全屏 (AppFullscreen)；**关掉它也会让小部件恢复** |
-| `persist.flipunlock.ui.widget` | true | 接管外屏小部件（移除/透传）；false = 全屏下也保留原生小部件 |
+| `persist.flipunlock.display.fullscreen` | true | 强制全屏 (AppFullscreen)；关掉它 → 整组关闭（含小部件恢复）|
+| `persist.flipunlock.ui.widget` | true | 接管外屏小部件（移除/透传）；false → 整组关闭（小部件恢复 + **全屏也关**）|
 
 常开（无独立 property）：AppWhitelist / AppInterceptCacheFix / InputMethodHook + SogouInputHook /
 FlashlightHook / ControlCenterHook / NotifMenuFixHook / RecentsCacheFix。

@@ -59,10 +59,10 @@ object WidgetTouchPassthrough : BaseHook() {
     }
 
     override fun setupHooks(param: PackageReadyParam) {
-        // 2026-10-28: 与 WidgetRemove 同一套开关 —— widgetOverlayHooks(= ui.widget && display.fullscreen)。
-        //   只关 WidgetRemove 会落到"可见但点不动"的透传态, 不是用户要的"恢复小部件",
-        //   所以两个 widget hook 必须一起受控（关全屏 = 完全回到原生小部件）。
-        if (!Config.widgetOverlayHooks) {
+        // 2026-10-28: 与 WidgetRemove 同一个闸门 —— fullscreenActive(= display.fullscreen && ui.widget)。
+        //   只关 WidgetRemove 会落到"可见但点不动"的透传态, 不是"恢复小部件",
+        //   所以两个 widget hook 必须一起受控（任一开关关闭 = 完全回到原生小部件）。
+        if (!Config.fullscreenActive) {
             log("WidgetTouchPassthrough: DISABLED (ui.widget=${Config.uiWidget} fullscreen=${Config.displayFullscreen}) → 小部件恢复原生")
             return
         }

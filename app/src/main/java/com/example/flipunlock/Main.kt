@@ -12,6 +12,7 @@ import com.example.flipunlock.hook.system_server.AppWhitelist
 import com.example.flipunlock.hook.system_server.CutoutZeroHook
 import com.example.flipunlock.hook.system_server.DeviceStatePin
 import com.example.flipunlock.hook.system_server.InputMethodHook
+import com.example.flipunlock.hook.system_server.InterceptUnlock
 import com.example.flipunlock.hook.systemui.AodHook
 import com.example.flipunlock.hook.systemui.ControlCenterHook
 import com.example.flipunlock.hook.systemui.FlashlightHook
@@ -77,6 +78,11 @@ class Main : XposedModule() {
         AppFullscreen.hook(param)      // size-compat 禁用(全屏)
         AppWhitelist.hook(param)       // 外屏 app 白名单(全部 app setForceDisplayCompatMode allowstart)
         AppInterceptCacheFix.hook(param) // 拦截判定缓存修复: hasActivityInterceptionKey→false(被拦过缓存 true 导致放行无效, 2026-09-18 国际版)
+        // [2026-11-16] 属性 4(NoProp) 合盖时 sFolded=true -> 拦截真的会发生。
+        // 4.0.3 起 InterceptActivityController 由 MiuiStubRegistry.loadJar 从独立 jar 动态加载
+        // (不在主 classpath), AppInterceptCacheFix ② 的 loadClass 必失败 -> 这里捕获 child
+        // ClassLoader 后直接 hook isInterceptListUnCheckFold→false。开关 persist.flipunlock.app.intercept。
+        InterceptUnlock.hook(param)
         InputMethodHook.hook(param)    // IME 外屏自由(shouldShowCurrentInput→true / 转屏 toast 抑制)
         AodHook.hookFramework(param)   // AOD framework 侧(双机型入口; #1/#2 已 DISABLED)
     }

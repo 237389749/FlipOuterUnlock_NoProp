@@ -45,6 +45,7 @@ object Config {
         "persist.flipunlock.ui.widget",
         "persist.flipunlock.devicestate.pin",
         "persist.flipunlock.devicestate.value",
+        "persist.flipunlock.app.intercept",
     )
 
     // Master switch —— 所有 hook(含常开的优化项)统一受它控制
@@ -72,6 +73,20 @@ object Config {
     // 值只能是外屏单屏态 0/1/4(默认 4, 不带 TRIGGER_SLEEP); 5/6(双屏)会致 applyLayoutLocked NPE
     val deviceStatePin: Boolean get() = enabled && raw("persist.flipunlock.devicestate.pin", false)
     val deviceStatePinValue: Int get() = rawInt("persist.flipunlock.devicestate.value", 4)
+
+    /**
+     * 外屏启动拦截解除（`InterceptUnlock`，2026-11-16）——**属性 4 下真正需要的那条**。
+     *
+     * 为什么保留单独开关（打破"纯优化项常开"的惯例）：它会直接翻转可见行为
+     * （原本被拦的 app 能在合盖外屏上打开），而且 4.0.3 换了装载方式（动态 jar + 独立
+     * ClassLoader），一旦某次 OTA 再变，需要能**单独关掉**回退到「只靠 allowstart 白名单」，
+     * 不必整个模块停用。
+     *
+     * 依赖关系：AppInterceptCacheFix ①（`AppCompatTask.hasActivityInterceptionKey→false`，
+     * 类仍在 services.jar）与 AppWhitelist（400 包 allowstart 重放）都**不需要**它；
+     * 它生效后那两条降级为冗余兜底。
+     */
+    val appIntercept: Boolean get() = enabled && raw("persist.flipunlock.app.intercept", true)
 
     /** Print all toggle keys and values. */
     fun logConfig() {

@@ -101,8 +101,12 @@ jobs:
       - name: Package property-layer module (zip, Magisk/KSU flashable)
         if: github.ref_type == 'tag'
         run: |
-          (cd property_layer/flip_prop && zip -r ../../flipunlock_prop.zip .)
-          echo "ZIP_GLOB=flipunlock_prop.zip" >> $GITHUB_ENV
+          if [ -d property_layer/flip_prop ]; then
+            (cd property_layer/flip_prop && zip -r ../../flipunlock_prop.zip .)
+            echo "ZIP_GLOB=flipunlock_prop.zip" >> $GITHUB_ENV
+          else
+            echo "no property_layer/flip_prop in this repo, skip prop zip"
+          fi
 
       - name: Upload APK (artifact)
         uses: actions/upload-artifact@v5

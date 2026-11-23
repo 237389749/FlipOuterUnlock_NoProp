@@ -11,6 +11,7 @@ import com.example.flipunlock.hook.system_server.AppInterceptCacheFix
 import com.example.flipunlock.hook.system_server.AppWhitelist
 import com.example.flipunlock.hook.system_server.CutoutZeroHook
 import com.example.flipunlock.hook.system_server.DeviceStatePin
+import com.example.flipunlock.hook.system_server.ImmersiveStatusBar
 import com.example.flipunlock.hook.system_server.InputMethodHook
 import com.example.flipunlock.hook.system_server.InterceptUnlock
 import com.example.flipunlock.hook.systemui.AodHook
@@ -85,6 +86,7 @@ class Main : XposedModule() {
         InterceptUnlock.hook(param)
         InputMethodHook.hook(param)    // IME 外屏自由(shouldShowCurrentInput→true / 转屏 toast 抑制)
         AodHook.hookFramework(param)   // AOD framework 侧(双机型入口; #1/#2 已 DISABLED)
+        ImmersiveStatusBar.hook(param) // [2026-11-23] 外屏默认沉浸: 状态栏 114px 让给应用(forced-hide 通道)
     }
 
     override fun onPackageReady(param: PackageReadyParam) {

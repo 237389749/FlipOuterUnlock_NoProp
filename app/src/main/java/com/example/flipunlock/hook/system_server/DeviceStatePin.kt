@@ -57,6 +57,12 @@ object DeviceStatePin {
             return
         }
         val target = Config.deviceStatePinValue
+        // 2026-11-23: 只允许外屏单屏态 0/1/4。5/6 是双屏态 —— 内屏 LogicalDisplay 不存在时
+        // applyLayoutLocked 直接 NPE（android.display 崩 + LSP 安全模式），本文件头注也写了。
+        if (target !in intArrayOf(0, 1, 4)) {
+            log("DeviceStatePin: invalid value $target (only 0/1/4 = outer single-screen states) -> SKIP")
+            return
+        }
         log("DeviceStatePin: setting up → state $target")
         safeHook("DeviceStatePin") {
             hookProviderListener(param.classLoader, target)

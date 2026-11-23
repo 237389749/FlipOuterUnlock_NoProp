@@ -97,12 +97,13 @@ object CutoutAlwaysHook : BaseHook() {
     // ── #3 DisplayCutout getters → empty Rect (defense) ──
     private fun hookBoundingRects(classLoader: ClassLoader) {
         val dcClass = classLoader.loadClass("android.view.DisplayCutout")
-        val emptyRect = Rect(0, 0, 0, 0)
         for (name in listOf("getBoundingRectLeft", "getBoundingRectRight",
                 "getBoundingRectTop", "getBoundingRectBottom")) {
             runCatching {
-                hook(dcClass.getMethod(name), replaceResult(emptyRect))
-                log("CutoutAlwaysHook: ✓ DisplayCutout.$name → empty")
+                // 2026-11-23: 每次返回**新的** Rect —— 原来四个 getter 共用一个 emptyRect，
+                // 调用方一改就污染全局（Rect 是可变对象）。
+                hook(dcClass.getMethod(name)) { Rect(0, 0, 0, 0) }
+                log("CutoutAlwaysHook: ✓ DisplayCutout.$name → empty (fresh Rect)")
             }.onFailure { /* 忽略（final/不存在）*/ }
         }
         runCatching {

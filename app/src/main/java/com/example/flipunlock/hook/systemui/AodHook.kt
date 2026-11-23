@@ -535,8 +535,9 @@ object AodHook : BaseHook() {
     // 时机: 层 B(注入时, plugin 已加载则装) + L2(onDreamingStarted, machineCl 必达, 覆盖
     //   第一次 dream 之后的所有 create)。
     private fun hookDozeLifecycleOwnerInitState(cl: ClassLoader) {
-        if (!initStateHookedCls.add(cl)) return
-        runCatching {
+        // 2026-11-23: 先装后置位 —— 原来 add(cl) 在安装前，装失败就永久放弃（同 :682 的 bug）。
+        if (cl in initStateHookedCls) return
+        val r = runCatching {
             val ownerCls = cl.loadClass("com.miui.aod.DozeLifecycleOwner")
             val registryCls = cl.loadClass("androidx.lifecycle.LifecycleRegistry")
             val stateCls = cl.loadClass("androidx.lifecycle.Lifecycle\$State")
@@ -556,8 +557,14 @@ object AodHook : BaseHook() {
                 }.onFailure { log("AodHook: initState registry reset failed: ${it.message}") }
                 chain.proceed()
             })
+            true
+        }
+        if (r.getOrDefault(false)) {
+            initStateHookedCls.add(cl)
             log("AodHook: ✓ DozeLifecycleOwner.initState 防崩 hook (cl=${cl})")
-        }.onFailure { log("AodHook: initState hook failed: ${it.message}") }
+        } else {
+            log("AodHook: initState hook failed: ${r.exceptionOrNull()?.message} (will retry)")
+        }
     }
 
     // ── #3/#4 framework DreamService (visible from SystemUI) ──

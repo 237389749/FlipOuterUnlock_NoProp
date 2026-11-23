@@ -136,7 +136,16 @@ object InterceptUnlock {
                 log("InterceptUnlock: [$source] isInterceptListUnCheckFold 找不到: ${it.message}")
                 return
             }
-        hook(m, replaceResult(false))
+        // 2026-11-23: 裸 hook 会从 MiuiStubRegistry.loadJar 链把异常带进 system_server 启动期；
+        // 失败只记日志、不置 installed，留给后续 classloader 重试。
+        val ok = runCatching {
+            hook(m, replaceResult(false))
+            true
+        }.getOrElse {
+            log("InterceptUnlock: [$source] hook isInterceptListUnCheckFold failed: ${it.message}")
+            false
+        }
+        if (!ok) return
         installed = true
         log(
             "InterceptUnlock: ✓ [$source] ${cls.name}.isInterceptListUnCheckFold → false" +

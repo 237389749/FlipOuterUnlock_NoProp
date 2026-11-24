@@ -18,6 +18,8 @@
 **Display & Fullscreen**
 - **Cutout 全清（双端）** — `CutoutZeroHook`（system_server 源头清零：`calculateDisplayCutoutForRotation→NO_CUTOUT` + `pathAndDisplayCutoutFromSpec` + `InsetsState.getDisplayCutoutSafe` + `fromResourcesRectApproximation`）+ `CutoutAlwaysHook`（全进程非 null 空 cutout 构造 → 全局全屏，含相机防御）
 - **Force fullscreen** — `AppFullscreen`（禁用 MIUI flip size-compat letterbox，app 端 `getLayoutInDisplayCutoutMode→ALWAYS`）
+- **默认安装器换 AOSP** — `PackageInstallerSwap`：状态层（AOSP `setInstalled(true,0)` / MIUI 摘表 / required 字段挪走）+ 路由层（APK VIEW 重解析）；开关 `persist.flipunlock.installer.swap`（默认开）
+- **Default installer swap** — `PackageInstallerSwap`: AOSP installer takes over from MIUI's (state + routing layer; switch `persist.flipunlock.installer.swap`, default true)
 
 **App**
 - `AppWhitelist` — outer-screen app launch whitelist（allowstart 放行）

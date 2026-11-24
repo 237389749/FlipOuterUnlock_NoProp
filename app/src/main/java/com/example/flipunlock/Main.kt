@@ -14,6 +14,7 @@ import com.example.flipunlock.hook.system_server.DeviceStatePin
 import com.example.flipunlock.hook.system_server.ImmersiveStatusBar
 import com.example.flipunlock.hook.system_server.InputMethodHook
 import com.example.flipunlock.hook.system_server.InterceptUnlock
+import com.example.flipunlock.hook.system_server.PackageInstallerSwap
 import com.example.flipunlock.hook.systemui.AodHook
 import com.example.flipunlock.hook.systemui.ControlCenterHook
 import com.example.flipunlock.hook.systemui.FlashlightHook
@@ -84,6 +85,7 @@ class Main : XposedModule() {
         // (不在主 classpath), AppInterceptCacheFix ② 的 loadClass 必失败 -> 这里捕获 child
         // ClassLoader 后直接 hook isInterceptListUnCheckFold→false。开关 persist.flipunlock.app.intercept。
         InterceptUnlock.hook(param)
+        PackageInstallerSwap.hook(param)  // [2026-11-25] 默认安装器换 AOSP(状态层+路由层)
         InputMethodHook.hook(param)    // IME 外屏自由(shouldShowCurrentInput→true / 转屏 toast 抑制)
         AodHook.hookFramework(param)   // AOD framework 侧(双机型入口; #1/#2 已 DISABLED)
         ImmersiveStatusBar.hook(param) // [2026-11-23] 外屏默认沉浸: 状态栏 114px 让给应用(forced-hide 通道)

@@ -47,6 +47,7 @@ object Config {
         "persist.flipunlock.devicestate.pin",
         "persist.flipunlock.devicestate.value",
         "persist.flipunlock.app.intercept",
+        "persist.flipunlock.installer.swap",
     )
 
     // Master switch —— 所有 hook(含常开的优化项)统一受它控制
@@ -92,6 +93,9 @@ object Config {
      * 它生效后那两条降级为冗余兜底。
      */
     val appIntercept: Boolean get() = enabled && raw("persist.flipunlock.app.intercept", true)
+    // PackageInstallerSwap（系统默认安装器从 MIUI 版换成 AOSP 版）开关
+    //   2026-11-25 新增，与 unlock2 同一实现；默认 true，false = 完全原生（重启生效）。
+    val installerSwap: Boolean get() = enabled && raw("persist.flipunlock.installer.swap", true)
 
     /** Print all toggle keys and values. */
     fun logConfig() {

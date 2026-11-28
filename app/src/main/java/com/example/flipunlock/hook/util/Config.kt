@@ -43,6 +43,7 @@ object Config {
         "persist.flipunlock.display.cutout",
         "persist.flipunlock.display.fullscreen",
         "persist.flipunlock.display.immersive",
+        "persist.flipunlock.display.thirdparty_rotation",
         "persist.flipunlock.ui.widget",
         "persist.flipunlock.devicestate.pin",
         "persist.flipunlock.devicestate.value",
@@ -61,6 +62,14 @@ object Config {
     //   2026-11-23 用户定案：外屏高度宝贵，状态栏默认隐藏；下拉通知栏、顶部下滑临时呼出都保留。
     //   实现走 DisplayPolicy 的 forced-hide 通道（ImmersiveStatusBar.kt），不碰 policy_control。
     val displayImmersive: Boolean get() = enabled && raw("persist.flipunlock.display.immersive", true)
+    // 第三方 App 在外屏「上下颠倒」（相机取景差 180°）—— 2026-11-28 从 unlock2 移植
+    //   外屏面板 installOrientation=ROTATION_180，框架按 rotation=180 合成；而相机 SENSOR_ORIENTATION
+    //   是相对设备自然方向定义的 → 第三方标准公式 (sensor - rotation) 恒差 180°（系统相机靠 HAL
+    //   的 selfieUnfold=1 自补）。做法：system_server 显示信息出站口，对外屏 + 第三方 uid 把
+    //   「竖屏 180」归一化成 0；出站已是 0 时不动。详见 refMD Camera.md §13.12 / §13.12.5。
+    //   默认 true；设 0 = 完全原生（重启生效）。
+    val thirdPartyRotation: Boolean
+        get() = enabled && raw("persist.flipunlock.display.thirdparty_rotation", true)
 
     // 外屏小部件接管（WidgetRemove 移除窗口 / WidgetTouchPassthrough 触摸透传）
     // ★2026-10-28 联动（用户定案）: 全屏与小部件接管是**一体**的 ——

@@ -15,6 +15,7 @@ import com.example.flipunlock.hook.system_server.ImmersiveStatusBar
 import com.example.flipunlock.hook.system_server.InputMethodHook
 import com.example.flipunlock.hook.system_server.InterceptUnlock
 import com.example.flipunlock.hook.system_server.PackageInstallerSwap
+import com.example.flipunlock.hook.system_server.ThirdPartyDisplayRotationHook
 import com.example.flipunlock.hook.systemui.AodHook
 import com.example.flipunlock.hook.systemui.ControlCenterHook
 import com.example.flipunlock.hook.systemui.FlashlightHook
@@ -89,6 +90,10 @@ class Main : XposedModule() {
         InputMethodHook.hook(param)    // IME 外屏自由(shouldShowCurrentInput→true / 转屏 toast 抑制)
         AodHook.hookFramework(param)   // AOD framework 侧(双机型入口; #1/#2 已 DISABLED)
         ImmersiveStatusBar.hook(param) // [2026-11-23] 外屏默认沉浸: 状态栏 114px 让给应用(forced-hide 通道)
+        // [2026-11-28] 第三方 App 在外屏取景上下颠倒: 显示信息出站口把「竖屏 180」归一化成 0
+        //   (从 unlock2 移植; 根因与身份无关, 属性 4 下同样成立; 属性 4 若本来发 0 则是 no-op)。
+        //   见 refMD Camera.md §13.12 / §13.12.5。
+        ThirdPartyDisplayRotationHook.hook(param)
     }
 
     override fun onPackageReady(param: PackageReadyParam) {
